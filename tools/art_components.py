@@ -10,7 +10,8 @@ def fg_mask(a):
     r, g, b = a[..., 0].astype(int), a[..., 1].astype(int), a[..., 2].astype(int)
     magenta = (r > 150) & (b > 150) & (g < 130) & (np.abs(r - b) < 100)
     fg = ~magenta
-    fg[:7, :] = False; fg[-7:, :] = False; fg[:, :7] = False; fg[:, -7:] = False
+    m = 12  # 截圖邊緣的黑框（有些比較粗）
+    fg[:m, :] = False; fg[-m:, :] = False; fg[:, :m] = False; fg[:, -m:] = False
     return fg
 
 
@@ -62,8 +63,42 @@ def components(path, min_gap=3, min_area=150):
     fg = fg_mask(np.array(im))
     H, W = fg.shape
     boxes = [b for b in xycut(fg, 0, 0, W, H, 0, min_gap) if b[4] >= min_area]
-    boxes.sort(key=lambda b: (round(((b[1] + b[3]) / 2) / 45), b[0]))
+    boxes = merge_small(boxes)
+    boxes = sort_rows(boxes)
     return im, boxes
+
+
+def merge_small(boxes, frac=0.22):
+    """小碎片（星星、灰塵、手裏劍）併到最近的大塊"""
+    if len(boxes) < 3:
+        return boxes
+    areas = sorted(b[4] for b in boxes)
+    med = areas[len(areas) // 2]
+    big = [list(b) for b in boxes if b[4] >= med * frac]
+    for b in boxes:
+        if b[4] >= med * frac:
+            continue
+        cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+        tgt = min(big, key=lambda B: max(0, B[0] - cx, cx - B[2]) + max(0, B[1] - cy, cy - B[3]))
+        tgt[0] = min(tgt[0], b[0]); tgt[1] = min(tgt[1], b[1]); tgt[2] = max(tgt[2], b[2]); tgt[3] = max(tgt[3], b[3]); tgt[4] += b[4]
+    return [tuple(b) for b in big]
+
+
+def sort_rows(boxes):
+    """依照「列」排序：中心高度相近的算同一列，列內由左到右"""
+    boxes = sorted(boxes, key=lambda b: (b[1] + b[3]) / 2)
+    rows, cur = [], []
+    for b in boxes:
+        cy = (b[1] + b[3]) / 2
+        if cur and cy - (cur[0][1] + cur[0][3]) / 2 > max(25, (cur[0][3] - cur[0][1]) * 0.5):
+            rows.append(cur); cur = []
+        cur.append(b)
+    if cur:
+        rows.append(cur)
+    out = []
+    for r in rows:
+        out += sorted(r, key=lambda b: b[0])
+    return out
 
 
 if __name__ == '__main__':

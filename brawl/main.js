@@ -3,6 +3,7 @@ import { OUT, drawText, textW } from '../sample-race/pix.js';
 import { sfx, initAudio } from '../src/audio.js';
 import * as ART from '../br/art.js';
 import { tintLook, drawFighter, drawHead, drawWeapon, dot, seg } from './fighter.js';
+import * as SP from './sprites.js';
 
 // ---------- 畫面 ----------
 const IS_TOUCH = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
@@ -67,6 +68,7 @@ let fighters = [], player = null, phase = 'select', phaseT = 0, time = 0, gameT 
 let camX = 0, shake = 0, hitstop = 0, flash = 0, flashCol = '255,255,255';
 const items = [], shots = [], particles = [], chunks = [], corpses = [], fires = [], clouds = [], bolts = [], nums = [];
 let itemT = 3;
+const fx = []; // 圖片特效：{ n 名稱, x, z, y, t, dur, k 大小, flip }
 const bombs = [], rings = [], skyS = [];
 let skyT = 9, hintN = 0, waveFade = 0;
 // 自己畫的技能圖示（美術圖沒有的）
@@ -130,7 +132,7 @@ function splat(x, z, r) {
 function makeFighter(i, type, isPlayer) {
   const st = STATS[type];
   return {
-    id: i, type, isPlayer, name: isPlayer ? '你' : AINAMES[(i * 5) % AINAMES.length], look: tintLook(type, isPlayer ? 0 : i),
+    id: i, type, isPlayer, name: isPlayer ? '你' : AINAMES[(i * 5) % AINAMES.length], look: tintLook(type, isPlayer ? 0 : i), tint: isPlayer ? 0 : i,
     x: 0, z: 0, y: 0, vx: 0, vz: 0, vy: 0, kx: 0, face: 1, spd: st.spd,
     hp: st.hp * TUNE.hpMul, maxHp: st.hp * TUNE.hpMul, alive: true, state: 'idle', st: 0, walkPh: 0, combo: 0, comboT: 0, queued: false, hitSet: new Set(),
     cd: { near: 1.5, far: 3, area: 6 }, rollCd: 0, invulT: 0, stunT: 0, frozenT: 0, flashT: 0, slowT: 0,
@@ -152,7 +154,7 @@ function startGame(type) {
   }
   player = fighters[0];
   [fighters[0].x, fighters[2].x] = [fighters[2].x, fighters[0].x];
-  for (const a of [items, shots, particles, chunks, corpses, fires, clouds, bolts, nums, bombs, rings, skyS, booms]) a.length = 0;
+  for (const a of [items, shots, particles, chunks, corpses, fires, clouds, bolts, nums, bombs, rings, skyS, booms, fx]) a.length = 0;
   skyT = 9; waveFade = 0;
   paintFloor();
   Object.assign(wave, { state: 'wait', t: 16, x: 0 });
@@ -274,7 +276,7 @@ const alive = () => fighters.filter((f) => f.alive);
 const enemiesOf = (f) => fighters.filter((o) => o !== f && o.alive);
 const onGround = (f) => f.y <= 0.01;
 
-function setState(f, s) { f.state = s; f.st = 0; f.hitSet = new Set(); }
+function setState(f, s) { f.state = s; f.st = 0; f.hitSet = new Set(); f.slashFx = false; }
 const free = (f) => f.state === 'idle' || f.state === 'walk';
 
 // 打到人
@@ -290,6 +292,8 @@ function hit(a, t, dmg, o = {}) {
   blood(t.x, t.z, t.y + 18, Math.min(45, 8 + dmg * 1.2), 70, 70);
   if (Math.random() < 0.5) splat(t.x + rnd(-6, 6), t.z + rnd(-3, 3), 2);
   nums.push({ x: t.x, z: t.z, y: t.y + 38, v: Math.round(dmg), t: 0, c: a && a.isPlayer ? '#ffe000' : '#ffffff' });
+  fx.push({ n: dmg > 18 || o.knock ? 'fx_sparkR' : 'fx_sparkY', x: t.x - dir * 4, z: t.z, y: t.y + 20, t: 0, dur: 0.18, k: 0.7 });
+  if (t.z > WATER_Z) fx.push({ n: 'fx_splash', x: t.x, z: t.z, y: 0, t: 0, dur: 0.4, k: 0.8 });
   if (o.stun) { t.stunT = Math.max(t.stunT, o.stun); }
   for (const k of ['bleed', 'burn', 'poison']) if (o[k]) { t[k + 'T'] = Math.max(t[k + 'T'], o[k]); t.dotBy = a; }
   if (t.weapon && (o.knock || Math.random() < 0.3)) dropWeapon(t);
@@ -317,7 +321,8 @@ function killF(t, by, cause, dir = 1) {
   for (let i = 0; i < 5; i++) splat(t.x + rnd(-16, 16), t.z + rnd(-6, 6), rnd(2, 5));
   // 頭飛出去，屍體倒在地上（脖子還在噴血）
   chunks.push({ head: true, f: t, x: t.x, z: t.z, y: t.y + 30, vx: dir * rnd(40, 110), vz: rnd(-20, 20), vy: rnd(130, 200), rot: 0, life: 8 });
-  corpses.push({ f: { ...t, state: 'corpse', st: 0, flashT: 0, weapon: null, face: -dir }, x: t.x + dir * 10, z: t.z, fount: 2.5 });
+  corpses.push({ f: { ...t, state: 'corpse', st: 0, flashT: 0, weapon: null, face: -dir, skAnim: null, spinFace: 0 }, x: t.x + dir * 10, z: t.z, fount: 2.5 });
+  fx.push({ n: 'fx_bloodburst', x: t.x, z: t.z, y: t.y + 16, t: 0, dur: 0.45, k: 1.1 });
   if (t.weapon) dropWeapon(t);
   sfx.splat(1);
   shake = Math.max(shake, 4);
@@ -431,6 +436,10 @@ function castSkill(f, slot) {
   const P = f.isPlayer, m = P ? 1 : 0.8;
   const tgt = nearest(f, 400);
   if (P) popup(SKILLS[f.type][slot][0] + '！', 'skill');
+  const L = { near: 'A', far: 'B', area: 'C' }[slot];
+  f.skAnim = { seq: ['sk' + L + '0', 'sk' + L + '1'], t0: time, split: 0.13, dur: slot === 'area' ? 0.6 : 0.42 };
+  if (f.type === 'muscle' && slot === 'area') f.skAnim = { seq: ['skCair', 'skC1'], t0: time, split: 0.3, dur: 0.6 };
+  if (f.type === 'ninja' && slot === 'near') f.skAnim = { seq: ['skA1', 'skA1'], t0: time, split: 0.1, dur: 0.3 };
   const key = f.type + '.' + slot;
   switch (key) {
     case 'muscle.near': faceTo(f, nearest(f, 60)); setState(f, 'dash'); f.dash = { t: 0.22, spd: 200, dmg: 26 * m, opt: { stun: 1.2, kb: 90, cause: 'hit' } }; f.dashLean = 0.9; break;
@@ -611,6 +620,7 @@ function stepFighter(f, c, dt) {
     const n = f.combo, dur = [0, 0.24, 0.26, 0.4][n], a0 = [0, 0.05, 0.06, 0.13][n], a1 = [0, 0.12, 0.13, 0.24][n];
     f.vx = 0; f.vz = 0;
     if (t > a0 && t < a1) meleeCheck(f, n === 3 ? 27 : 22, [0, 8, 9, 14][n], n === 3 ? { knock: true, kb: 150 } : { kb: 45 });
+    if (t > a0 && !f.slashFx) { f.slashFx = true; fx.push({ n: n === 3 ? 'fx_slashB' : 'fx_slashS', x: f.x + f.face * 16, z: f.z, y: f.y + 18, t: 0, dur: 0.14, k: n === 3 ? 0.5 : 0.4, flip: f.face < 0 }); }
     if (t > a1 && c.atk) f.queued = true;
     if (t >= dur) {
       f.comboT = 0.35;
@@ -918,6 +928,7 @@ function update(dt) {
   for (const b of bolts) b.t += dt;
   for (let i = bolts.length - 1; i >= 0; i--) if (bolts[i].t > 0.3) bolts.splice(i, 1);
   for (let i = nums.length - 1; i >= 0; i--) { nums[i].t += dt; if (nums[i].t > 0.8) nums.splice(i, 1); }
+  for (let i = fx.length - 1; i >= 0; i--) { fx[i].t += dt; if (fx[i].t > fx[i].dur) fx.splice(i, 1); }
   // 勝負
   if (phase === 'fight' && al.length <= 1) { phase = 'over'; if (al[0]) al[0].place = 1; setTimeout(endGame, 1800); if (al[0] && al[0].isPlayer) popup('你是最後的倖存者！', 'kill'); }
   // 攝影機
@@ -975,6 +986,9 @@ function drawBackground() {
     }
     g.imageSmoothingEnabled = false;
   }
+  // 場地最遠處（沙灘後排）的救生員塔、遮陽傘、鯊魚警告牌
+  const back = [['prop_tower', 90, 0.62], ['prop_umbrella', 230, 0.55], ['prop_sharksign', 330, 0.6], ['prop_umbrella', 470, 0.5], ['prop_tower', 560, 0.62]];
+  for (const [n, x, k] of back) { const sx = x - camX; if (sx > -60 && sx < W + 60) SP.drawSprite(g, n, sx, FLOOR_Y + 3, k); }
 }
 function drawFloor() {
   g.drawImage(floor, Math.round(camX), 0, W, FH, 0, FLOOR_Y, W, FH);
@@ -1026,17 +1040,22 @@ function render() {
   // 依前後順序畫
   const list = [];
   for (const it of items) list.push({ z: it.z, d: () => drawItem(it) });
-  for (const c of corpses) list.push({ z: c.z - 0.5, d: () => drawFighter(g, c.f, SX(c.x), SY(c.z), time, { headless: true }) });
+  for (const c of corpses) list.push({ z: c.z - 0.5, d: () => SP.drawFighterArt(g, c.f, SX(c.x), SY(c.z), time) || drawFighter(g, c.f, SX(c.x), SY(c.z), time, { headless: true }) });
   for (const f of fighters) if (f.alive) list.push({ z: f.z, d: () => drawOne(f) });
   for (const s of shots) list.push({ z: s.z, d: () => drawShot(s) });
-  for (const c of chunks) list.push({ z: c.z, d: () => { drawShadow(c.x, c.z, 3); g.save(); g.translate(SX(c.x), SY(c.z, c.y + 5)); g.rotate(c.rot); drawHead(g, c.f, [0, 0], c.f.face); dot(g, 0, 5, 2.4, '#c01028'); g.restore(); } });
+  for (const c of chunks) list.push({ z: c.z, d: () => {
+    drawShadow(c.x, c.z, 3);
+    if (SP.S[c.f.type + '_head']) { SP.drawSprite(g, c.f.type + '_head', SX(c.x), SY(c.z, c.y), 0.42, c.f.face < 0, 1, c.rot); return; }
+    g.save(); g.translate(SX(c.x), SY(c.z, c.y + 5)); g.rotate(c.rot); drawHead(g, c.f, [0, 0], c.f.face); dot(g, 0, 5, 2.4, '#c01028'); g.restore();
+  } });
   for (const sk of sharks) list.push({ z: DEPTH - 6, d: () => drawShark(sk) });
   for (const sk of skyS) list.push({ z: sk.z, d: () => drawSkyShark(sk) });
-  for (const b of bombs) list.push({ z: b.z, d: () => { const sx = SX(b.x), sy = SY(b.z); g.fillStyle = OUT; g.fillRect(sx - 6, sy - 11, 12, 11); g.fillStyle = '#f08a20'; g.fillRect(sx - 5, sy - 10, 10, 9); g.fillStyle = Math.floor(time * 16) % 2 ? '#ff2020' : '#ffffff'; g.fillRect(sx - 1, sy - 15, 2, 4); } });
+  for (const b of bombs) list.push({ z: b.z, d: () => { const sx = SX(b.x), sy = SY(b.z); if (SP.drawSprite(g, 'fx_bombbox', sx, sy + 1, 0.7 + Math.sin(time * 30) * 0.05)) return; g.fillStyle = OUT; g.fillRect(sx - 6, sy - 11, 12, 11); g.fillStyle = '#f08a20'; g.fillRect(sx - 5, sy - 10, 10, 9); g.fillStyle = Math.floor(time * 16) % 2 ? '#ff2020' : '#ffffff'; g.fillRect(sx - 1, sy - 15, 2, 4); } });
   list.sort((a, b) => a.z - b.z);
   for (const e of list) e.d();
   for (const fr of fires) { g.fillStyle = Math.floor(time * 12 + fr.x) % 2 ? '#ff6a14' : '#ffd040'; g.fillRect(SX(fr.x) - 2, SY(fr.z) - 4, 4, 4); }
   for (const cl of clouds) {
+    if (SP.S.fx_smoke) { for (let k = 0; k < 3; k++) SP.drawSprite(g, 'fx_smoke', SX(cl.x + (k - 1) * cl.r * 0.55), SY(cl.z + (k % 2) * 6) + 6, 0.9 + Math.sin(time * 2 + k) * 0.1, k === 1, 0.6); continue; }
     g.globalAlpha = 0.45;
     for (let k = 0; k < 6; k++) dot(g, SX(cl.x + Math.cos(k + time) * cl.r * 0.6), SY(cl.z + Math.sin(k * 2) * 10, 10 + Math.sin(time * 2 + k) * 4), 12, k % 2 ? '#4ab04a' : '#6a6a7a');
     g.globalAlpha = 1;
@@ -1055,13 +1074,16 @@ function render() {
   for (const rg of rings) {
     const k = rg.t / 0.4, rr = rg.r * (0.3 + k);
     g.globalAlpha = 1 - k; g.fillStyle = '#ffffff';
+    if (SP.S.fx_dust) { g.globalAlpha = 1; SP.drawSprite(g, 'fx_dust', SX(rg.x), SY(rg.z) + 6, (rr * 2.2) / 72, false, 1 - k); continue; }
     for (let a = 0; a < Math.PI * 2; a += 0.12) g.fillRect(SX(rg.x + Math.cos(a) * rr), SY(rg.z + Math.sin(a) * rr * 0.42), 2, 2);
     g.globalAlpha = 1;
   }
   for (const b of booms) {
+    if (SP.S.fx_fire) { const k = b.t / 0.5; SP.drawSprite(g, 'fx_fire', SX(b.x), SY(b.z) + 4, 0.8 + k * 0.6, false, 1 - k * k); continue; }
     const im = ART.A.fx_boom, k = b.t / 0.5;
     if (im) { const h = 60 * (0.5 + k); const w = (im.width * h) / im.height; g.globalAlpha = 1 - k * k; g.imageSmoothingEnabled = true; g.drawImage(im, SX(b.x) - w / 2, SY(b.z) - h * 0.75, w, h); g.imageSmoothingEnabled = false; g.globalAlpha = 1; }
   }
+  for (const e of fx) { const k = e.t / e.dur; SP.drawSprite(g, e.n, SX(e.x), SY(e.z, e.y) + 10, e.k * (0.8 + k * 0.5), e.flip, 1 - k * k); }
   for (const n of nums) drawText(g, String(n.v), SX(n.x) - textW(String(n.v), 1) / 2, SY(n.z, n.y + n.t * 20), 1, n.c);
   drawHud();
   if (flash > 0) { g.fillStyle = `rgba(${flashCol},0.5)`; g.fillRect(0, 0, W, H); }
@@ -1072,18 +1094,18 @@ function drawOne(f) {
   if (f.invulT > 0 && f.state === 'idle' && Math.floor(time * 20) % 2) return;
   if (f.z > WATER_Z && f.y < 2) {
     // 在水裡：下半身泡在水中
-    g.save(); g.beginPath(); g.rect(sx - 30, sy - 60, 60, 52); g.clip();
-    drawFighter(g, f, sx, sy, time);
+    g.save(); g.beginPath(); g.rect(sx - 40, sy - 80, 80, 72); g.clip();
+    SP.drawFighterArt(g, f, sx, sy, time) || drawFighter(g, f, sx, sy, time);
     g.restore();
     g.fillStyle = 'rgba(255,255,255,0.8)'; g.fillRect(sx - 8, sy - 8, 16, 1);
-  } else drawFighter(g, f, sx, sy, time);
+  } else SP.drawFighterArt(g, f, sx, sy, time) || drawFighter(g, f, sx, sy, time);
   if (f.frozenT > 0) { g.fillStyle = 'rgba(150,220,255,0.5)'; g.fillRect(sx - 9, sy - 40, 18, 40); g.fillStyle = 'rgba(255,255,255,0.7)'; g.fillRect(sx - 9, sy - 40, 18, 2); }
-  if (f.stunT > 0) for (let k = 0; k < 3; k++) { g.fillStyle = '#ffe000'; g.fillRect(Math.round(sx + Math.cos(time * 8 + k * 2) * 7), Math.round(sy - 40 + Math.sin(time * 8 + k * 2) * 2), 2, 2); }
+  if (f.stunT > 0 && !SP.drawSprite(g, 'fx_stars', sx, sy - 40, 0.5)) for (let k = 0; k < 3; k++) { g.fillStyle = '#ffe000'; g.fillRect(Math.round(sx + Math.cos(time * 8 + k * 2) * 7), Math.round(sy - 40 + Math.sin(time * 8 + k * 2) * 2), 2, 2); }
   // 頭上的血條與標記
-  const bw = 16, hp = clamp(f.hp / f.maxHp, 0, 1);
-  g.fillStyle = OUT; g.fillRect(sx - bw / 2 - 1, sy - 46, bw + 2, 3);
-  g.fillStyle = f.isPlayer ? '#40e070' : '#ff3040'; g.fillRect(sx - bw / 2, sy - 45, Math.round(bw * hp), 1);
-  if (f.isPlayer) { g.fillStyle = '#ffe000'; const yy = sy - 53 + Math.round(Math.sin(time * 6)); g.fillRect(sx - 2, yy, 5, 2); g.fillRect(sx - 1, yy + 2, 3, 1); g.fillRect(sx, yy + 3, 1, 1); }
+  const bw = 18, hp = clamp(f.hp / f.maxHp, 0, 1), hy = sy - 54;
+  g.fillStyle = OUT; g.fillRect(sx - bw / 2 - 1, hy, bw + 2, 3);
+  g.fillStyle = f.isPlayer ? '#40e070' : '#ff3040'; g.fillRect(sx - bw / 2, hy + 1, Math.round(bw * hp), 1);
+  if (f.isPlayer) { g.fillStyle = '#ffe000'; const yy = hy - 7 + Math.round(Math.sin(time * 6)); g.fillRect(sx - 2, yy, 5, 2); g.fillRect(sx - 1, yy + 2, 3, 1); g.fillRect(sx, yy + 3, 1, 1); }
 }
 function drawItem(it) {
   const gx = SX(it.x), gy = SY(it.z);
@@ -1104,7 +1126,7 @@ function drawItem(it) {
   const sx = gx, sy = SY(it.z, it.y + 6 + Math.sin(time * 4 + it.x) * 2);
   g.save(); g.translate(sx, sy); g.scale(1.6, 1.6);
   if (it.kind === 'magic') { const im = ART.A.icon_qbox; if (im) { g.imageSmoothingEnabled = true; g.drawImage(im, -7, -10, 14, 14); g.imageSmoothingEnabled = false; } }
-  else drawWeapon(g, it.kind, [-6, 0], 1.3, 1);
+  else if (!SP.drawSprite(g, 'it_' + it.kind, 0, 4, 0.32)) drawWeapon(g, it.kind, [-6, 0], 1.3, 1);
   g.restore();
   // 上面一個跳動的箭頭
   if (it.y < 2) { g.fillStyle = '#ffe000'; const ay = sy - 26 + Math.round(Math.sin(time * 6) * 2); for (let i = 0; i < 4; i++) g.fillRect(sx - 3 + i, ay + i, 7 - i * 2, 1); }
@@ -1123,11 +1145,16 @@ function drawShot(s) {
   } else if (s.kind === 'fireball') {
     const im = ART.A.fx_fireball;
     if (im) { g.imageSmoothingEnabled = true; g.save(); g.translate(sx, sy); if (s.vx < 0) g.scale(-1, 1); g.drawImage(im, -9, -8, 18, 16); g.restore(); g.imageSmoothingEnabled = false; }
-  } else drawWeapon(g, s.kind, [sx, sy], time * 15, 1);
+  } else if (!SP.drawSprite(g, 'it_' + s.kind, sx, sy + 6, 0.6, false, 1, time * 15)) drawWeapon(g, s.kind, [sx, sy], time * 15, 1);
 }
 function drawShark(sk) {
   const sx = SX(sk.x), sy = SY(DEPTH - 6);
   if (sx < -20 || sx > W + 20) return;
+  if (SP.S.shark_fin) {
+    SP.drawSprite(g, 'shark_fin', sx, sy + 3 + Math.sin(time * 4 + sk.x) * 1, 0.6, sk.dir < 0);
+    if (sk.bite > 0) { SP.drawSprite(g, 'shark_bite', sx, sy, 0.55, sk.dir < 0); SP.drawSprite(g, 'fx_splash', sx, sy + 2, 0.8); }
+    return;
+  }
   const d = sk.lunge > 0 ? 1 : 0;
   g.fillStyle = OUT;
   for (let i = 0; i < 9; i++) g.fillRect(sx - (sk.dir > 0 ? 6 : -6) + (sk.dir > 0 ? i * 0.6 : -i * 0.6) - 1, sy - 9 + i, Math.max(2, 9 - i) + 2, 1);
@@ -1161,11 +1188,12 @@ function drawSkyShark(sk) {
     g.fillStyle = 'rgba(255,0,40,0.25)'; g.fillRect(gx - rr, gy - 4, rr * 2, 8);
     drawText(g, '!', gx - 1, gy - 18 - Math.round(Math.sin(time * 10) * 2), 2, '#ff2040');
   }
-  if (sk.state === 'fall') { drawShadow(sk.x, sk.z, 10); sharkBody(gx, SY(sk.z, sk.y + 10), sk.dir, Math.PI / 2 * sk.dir, true); }
+  if (sk.state === 'fall') { drawShadow(sk.x, sk.z, 10); if (!SP.drawSprite(g, 'shark_fall', gx, SY(sk.z, sk.y), 0.75, sk.dir < 0)) sharkBody(gx, SY(sk.z, sk.y + 10), sk.dir, Math.PI / 2 * sk.dir, true); }
   if (sk.state === 'flop') {
     drawShadow(sk.x, sk.z, 12);
     const wob = Math.sin(time * 14 + sk.x) * 0.25;
-    sharkBody(gx, gy - 6 - Math.abs(Math.sin(time * 7)) * 3, sk.dir, wob, sk.chomp > 0 || Math.floor(time * 4) % 2 === 0);
+    const open = sk.chomp > 0 || Math.floor(time * 4) % 2 === 0;
+    if (!SP.drawSprite(g, open ? 'shark_bite' : 'shark_flop', gx, gy + 2 - Math.abs(Math.sin(time * 7)) * 3, 0.62, sk.dir < 0, 1, wob)) sharkBody(gx, gy - 6 - Math.abs(Math.sin(time * 7)) * 3, sk.dir, wob, open);
   }
 }
 function drawWave() {
@@ -1289,7 +1317,7 @@ function buildSelect() {
   });
   addEventListener('keydown', (e) => { if (phase !== 'select') return; const n = parseInt(e.key, 10); if (n >= 1 && n <= 4) box.children[n - 1].click(); });
 }
-ART.ready.then(() => {
+Promise.all([ART.ready, SP.ready]).then(() => {
   if (ART.LOGO) { const l = $('logo'); l.src = ART.LOGO.src; l.classList.remove('hidden'); $('title').classList.add('hidden'); }
   buildSelect();
   requestAnimationFrame(frame);
