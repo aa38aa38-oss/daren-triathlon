@@ -53,13 +53,22 @@ const STATS = { muscle: { hp: 130, spd: 1.0 }, ninja: { hp: 95, spd: 1.2 }, butc
 const AINAMES = ['暴躁阿明', '憂鬱小美', '中二老王', '佛系阿華', '社畜阿強', '禿頭小翠', '鹹魚志明', '熬夜春嬌', '厭世阿伯', '狂暴阿姨', '嘴砲小胖', '邪惡阿傑'];
 
 // 沙灘道具：近戰武器、丟擲物、魔法箱
+// 每關出現的道具不同（st = 會出現在哪幾關）
 const ITEMS = {
-  harpoon: { name: '魚叉', melee: true, uses: 10, reach: 40, dmg: 16, w: 0.6 },
-  surfboard: { name: '衝浪板', melee: true, uses: 5, reach: 34, dmg: 24, knock: true, w: 0.45 },
-  coconut: { name: '椰子', throw: true, dmg: 16, stun: 0.6, w: 0.6 },
-  bottle: { name: '啤酒瓶', throw: true, dmg: 12, bleed: 4, w: 0.5 },
-  magic: { name: '魔法箱', magic: true, w: 0.35 },
+  harpoon: { name: '魚叉', melee: true, thrust: true, uses: 10, reach: 40, dmg: 16, w: 0.6, st: ['beach', 'arena'], spr: 'it_harpoon' },
+  surfboard: { name: '衝浪板', melee: true, uses: 5, reach: 34, dmg: 24, knock: true, w: 0.45, st: ['beach', 'arena'], spr: 'it_surfboard' },
+  coconut: { name: '椰子', throw: true, dmg: 16, stun: 0.6, w: 0.6, st: ['beach'], spr: 'it_coconut' },
+  bottle: { name: '啤酒瓶', throw: true, dmg: 12, bleed: 4, w: 0.5, st: ['beach'], spr: 'it_bottle' },
+  pitchfork: { name: '草叉', melee: true, thrust: true, uses: 8, reach: 44, dmg: 17, w: 0.6, st: ['road', 'arena'], spr: 'it_pitchfork' },
+  bat: { name: '球棒', melee: true, uses: 8, reach: 30, dmg: 22, knock: true, w: 0.6, st: ['road', 'city', 'arena'], spr: 'it_bat' },
+  tire: { name: '輪胎', throw: true, dmg: 18, knock: true, w: 0.45, st: ['road'], spr: 'it_tire' },
+  barrel: { name: '油桶', throw: true, dmg: 28, explode: true, w: 0.4, st: ['road', 'arena'], spr: 'prop_barrel' },
+  chainsaw: { name: '電鋸', melee: true, uses: 14, reach: 32, dmg: 13, bleed: 3, w: 0.55, st: ['city', 'arena'], spr: 'it_chainsaw' },
+  trash: { name: '垃圾桶', throw: true, dmg: 16, stun: 0.6, w: 0.5, st: ['city'], spr: 'prop_trash' },
+  cone: { name: '三角錐', throw: true, dmg: 10, stun: 0.4, w: 0.5, st: ['city'], spr: 'prop_cone' },
+  magic: { name: '魔法箱', magic: true, w: 0.35, st: ['beach', 'road', 'city', 'arena'] },
 };
+const itemSpr = (k) => (ITEMS[k] && ITEMS[k].spr) || 'it_' + k;
 
 const TUNE = { aiDmgToPlayer: 0.85, aiAttack: 0.035, aiSkill: 0.007, hpMul: 6, heal: 30, spdX: 72, spdZ: 46, hitstop: 0.05 };
 
@@ -95,7 +104,18 @@ function shockwave(f, r, dmg) {
 }
 const wave = { state: 'wait', t: 16, x: 0, dir: 1 };
 const sharks = [{ x: 120, dir: 1, cd: 2, lunge: 0 }, { x: 460, dir: -1, cd: 4, lunge: 0 }];
-const stats = { kills: {}, cause: {} };
+const stats = { kills: {}, cause: {}, stage: 0 };
+// 四關：每關打到剩 target 人過關；前兩關玩家死了會復活
+const STAGES = [
+  { id: 'beach', name: '第一關：血海沙灘', sub: '打到剩 4 人過關・小心海嘯和鯊魚', pano: 'swim', target: 4, respawn: true },
+  { id: 'road', name: '第二關：鄉間公路', sub: '打到剩 3 人過關・小心絞肉推土機', pano: 'bike', target: 3, respawn: true },
+  { id: 'city', name: '第三關：殭屍城市', sub: '打到剩 2 人過關・殭屍見人就咬・只剩一條命', pano: 'run', target: 2, respawn: false },
+  { id: 'arena', name: '最終決戰：血池競技場', sub: '地板會一直崩塌・只能活一個', pano: 'arena', target: 1, respawn: false },
+];
+let stageIdx = 0, stage = STAGES[0], stageT = 0, mobT = 3, zombieWarned = false;
+const mobs = []; // 殭屍
+const dozer = { state: 'wait', t: 9, x: 0, dir: 1, z: 50, hit: new Set() };
+const arena = { L: 0, R: AW };
 
 // 地板（血跡會畫在這張圖上，一直留著）
 const FH = Math.ceil(DEPTH * ZS) + 2;
@@ -109,15 +129,32 @@ function paintFloor() {
     for (let x = 0; x < AW; x += 2) {
       const n = hsh(x >> 1, y);
       let c;
-      if (z > WATER_Z) c = n < 40 ? '#3a8ee6' : n > 230 ? '#7ac8ff' : '#2f7fd8';
-      else if (z > WATER_Z - 8) c = n < 80 ? '#c89a58' : '#d4a868';
-      else c = n < 20 ? '#d8b070' : n > 245 ? '#fff0c0' : n < 70 ? '#ecc888' : '#f2d090';
+      const id = stage.id;
+      if (id === 'beach') {
+        if (z > WATER_Z) c = n < 40 ? '#3a8ee6' : n > 230 ? '#7ac8ff' : '#2f7fd8';
+        else if (z > WATER_Z - 8) c = n < 80 ? '#c89a58' : '#d4a868';
+        else c = n < 20 ? '#d8b070' : n > 245 ? '#fff0c0' : n < 70 ? '#ecc888' : '#f2d090';
+      } else if (id === 'road') {
+        if (z < 11 || z > 97) c = n < 60 ? '#4a8a3a' : n > 230 ? '#6ab04a' : '#5a9a40';
+        else if (z < 15 || z > 93) c = (x >> 4) & 1 ? '#d8d8e0' : '#e02838';
+        else c = n < 50 ? '#44424e' : n > 235 ? '#5a5866' : '#4c4a58';
+        if (Math.abs(z - 54) < 0.9 && x % 40 < 22) c = '#f0c020';
+        if (Math.abs(z - 17) < 0.6 || Math.abs(z - 91) < 0.6) c = '#e8e8f0';
+      } else if (id === 'city') {
+        if (z < 14 || z > 96) c = ((x & 15) === 0 || ((y | 0) % 10) === 0) ? '#6a6a76' : n < 60 ? '#8a8a96' : '#94949f';
+        else c = n < 50 ? '#2e2c38' : n > 240 ? '#44424e' : '#34323e';
+        if (z >= 20 && z <= 90 && x > 280 && x < 340 && (x % 12) < 7) c = '#d8d8e0';
+        if (Math.abs(z - 55) < 0.8 && x % 36 < 18 && (x < 270 || x > 350)) c = '#d8c040';
+      } else {
+        const tx = (x / 24) | 0, tz = (z / 14) | 0;
+        c = (x % 24 < 1 || z % 14 < 0.8) ? '#4a3e36' : ((tx + tz) & 1 ? '#7a7068' : '#6a6058');
+        if (n > 250) c = '#8a0016';
+      }
       fctx.fillStyle = c;
       fctx.fillRect(x, y, 2, 1);
     }
   }
 }
-paintFloor();
 const BLOOD = ['#8a0016', '#a8102a', '#6e0010', '#c01838'];
 function splat(x, z, r) {
   const cx = x, cy = z * ZS;
@@ -153,19 +190,40 @@ function startGame(type) {
     fighters.push(f);
   }
   player = fighters[0];
-  [fighters[0].x, fighters[2].x] = [fighters[2].x, fighters[0].x];
-  for (const a of [items, shots, particles, chunks, corpses, fires, clouds, bolts, nums, bombs, rings, skyS, booms, fx]) a.length = 0;
-  skyT = 9; waveFade = 0;
-  paintFloor();
-  Object.assign(wave, { state: 'wait', t: 16, x: 0 });
-  itemT = 3; gameT = 0;
-  stats.kills = {}; stats.cause = {};
-  phase = 'intro'; phaseT = 2.2;
+  gameT = 0; zombieWarned = false;
+  stats.kills = {}; stats.cause = {}; stats.stage = 0;
   $('select').classList.add('hidden');
   if (IS_TOUCH) $('touch').classList.remove('hidden');
   setupButtons();
-  banner('第一關：血海沙灘', '6 人混戰・小心海嘯和鯊魚');
+  loadStage(0);
   initAudio();
+}
+
+function loadStage(i) {
+  stageIdx = i; stage = STAGES[i]; stageT = 0; stats.stage = i;
+  for (const a of [items, shots, particles, chunks, corpses, fires, clouds, bolts, nums, bombs, rings, skyS, booms, fx, mobs]) a.length = 0;
+  paintFloor();
+  Object.assign(wave, { state: 'wait', t: 16, x: 0 }); waveFade = 0; skyT = 9;
+  Object.assign(dozer, { state: 'wait', t: 8, x: 0 }); mobT = 2; arena.L = 0; arena.R = AW;
+  itemT = 2;
+  const list = fighters.filter((f) => f.alive || f.respawnT > 0);
+  list.sort((a, b) => (a.isPlayer ? -1 : 0) - (b.isPlayer ? -1 : 0));
+  list.forEach((f, k) => {
+    if (!f.alive) { f.alive = true; f.hp = f.maxHp * 0.6; }
+    f.hp = Math.min(f.maxHp, f.hp + f.maxHp * 0.4); // 過關補血
+    f.x = 70 + (k * (AW - 140)) / Math.max(1, list.length - 1);
+    f.z = rnd(25, 70); f.y = 0; f.face = f.x < AW / 2 ? 1 : -1;
+    setState(f, 'idle');
+    Object.assign(f, { vx: 0, vz: 0, vy: 0, kx: 0, weapon: null, stunT: 0, frozenT: 0, poisonT: 0, bleedT: 0, burnT: 0, respawnT: 0, invulT: 1.5, skAnim: null });
+    f.cd = { near: 1, far: 2, area: 4 };
+  });
+  // 玩家放中間
+  const mid = list[Math.floor(list.length / 2)];
+  if (mid && mid !== player) [player.x, mid.x] = [mid.x, player.x];
+  camX = clamp(player.x - W / 2, 0, AW - W);
+  panoC = null;
+  phase = 'intro'; phaseT = 2.4;
+  banner(stage.name, stage.sub);
 }
 
 // ---------- 輸入 ----------
@@ -273,7 +331,7 @@ function blood(x, z, y, n, spd, up, col) {
   if (particles.length > 1800) particles.splice(0, particles.length - 1800);
 }
 const alive = () => fighters.filter((f) => f.alive);
-const enemiesOf = (f) => fighters.filter((o) => o !== f && o.alive);
+const enemiesOf = (f) => fighters.concat(mobs).filter((o) => o !== f && o.alive && !(f.isMob && o.isMob));
 const onGround = (f) => f.y <= 0.01;
 
 function setState(f, s) { f.state = s; f.st = 0; f.hitSet = new Set(); f.slashFx = false; }
@@ -283,7 +341,7 @@ const free = (f) => f.state === 'idle' || f.state === 'walk';
 function hit(a, t, dmg, o = {}) {
   if (!t.alive || t.invulT > 0 || t.state === 'roll' || t.state === 'getup') return false;
   if (a && a === t) return false;
-  if (a && !a.isPlayer && t.isPlayer) dmg *= TUNE.aiDmgToPlayer;
+  if (a && !a.isPlayer && t.isPlayer) dmg *= TUNE.aiDmgToPlayer * (1 + stageIdx * 0.22); // 越後面的關卡電腦越兇
   if (t.frozenT > 0) { dmg *= 2.5; t.frozenT = 0; o.cause = o.cause || 'ice'; blood(t.x, t.z, 18, 30, 80, 90, '#bfefff'); }
   t.hp -= dmg;
   t.flashT = 0.1;
@@ -293,7 +351,7 @@ function hit(a, t, dmg, o = {}) {
   if (Math.random() < 0.5) splat(t.x + rnd(-6, 6), t.z + rnd(-3, 3), 2);
   nums.push({ x: t.x, z: t.z, y: t.y + 38, v: Math.round(dmg), t: 0, c: a && a.isPlayer ? '#ffe000' : '#ffffff' });
   fx.push({ n: dmg > 18 || o.knock ? 'fx_sparkR' : 'fx_sparkY', x: t.x - dir * 4, z: t.z, y: t.y + 20, t: 0, dur: 0.18, k: 0.7 });
-  if (t.z > WATER_Z) fx.push({ n: 'fx_splash', x: t.x, z: t.z, y: 0, t: 0, dur: 0.4, k: 0.8 });
+  if (stage.id === 'beach' && t.z > WATER_Z) fx.push({ n: 'fx_splash', x: t.x, z: t.z, y: 0, t: 0, dur: 0.4, k: 0.8 });
   if (o.stun) { t.stunT = Math.max(t.stunT, o.stun); }
   for (const k of ['bleed', 'burn', 'poison']) if (o[k]) { t[k + 'T'] = Math.max(t[k + 'T'], o[k]); t.dotBy = a; }
   if (t.weapon && (o.knock || Math.random() < 0.3)) dropWeapon(t);
@@ -312,6 +370,15 @@ function hit(a, t, dmg, o = {}) {
 }
 
 function killF(t, by, cause, dir = 1) {
+  if (t.isMob) { // 殭屍：綠色的血，躺在地上
+    t.alive = false;
+    blood(t.x, t.z, 20, 80, 90, 130); blood(t.x, t.z, 20, 40, 80, 100, '#6aaa40');
+    splat(t.x, t.z, 4);
+    corpses.push({ mob: true, f: { face: t.face }, x: t.x, z: t.z, fount: 0 });
+    if (by && !by.isMob) { by.hp = Math.min(by.maxHp, by.hp + 12); if (by.isPlayer) popup('打爆殭屍！'); }
+    sfx.splat(0.5);
+    return;
+  }
   t.alive = false;
   t.hp = 0;
   t.place = alive().length + 1;
@@ -332,9 +399,13 @@ function killF(t, by, cause, dir = 1) {
     feed(`${by.name} 殺了 ${t.name}`, by.isPlayer || t.isPlayer);
     if (by.isPlayer) { popup(['擊殺！', '雙殺！', '三殺！', '四殺！', '全滅！'][Math.min(by.kills, 5) - 1], 'kill'); flash = 0.06; flashCol = '255,255,255'; hitstop = 0.12; }
   } else {
-    feed(`${t.name} ${{ wave: '被海嘯捲走了', shark: '被鯊魚吃了', burn: '被燒死了', poison: '中毒死了' }[cause] || '慘死'}`, t.isPlayer);
+    feed(`${t.name} ${{ wave: '被海嘯捲走了', shark: '被鯊魚吃了', burn: '被燒死了', poison: '中毒死了', dozer: '被推土機絞碎了', fall: '掉進血池了', zombie: '被殭屍咬死了' }[cause] || '慘死'}`, t.isPlayer);
   }
-  if (t.isPlayer) { screenSplat(1); popup('你被殺了！', 'bad'); setTimeout(() => endGame(), 2200); }
+  if (t.isPlayer) {
+    screenSplat(1);
+    if (stage.respawn && phase === 'fight') { t.respawnT = 2.5; popup('你被殺了！2 秒後復活', 'bad'); }
+    else { popup('你被殺了！', 'bad'); setTimeout(() => endGame(), 2200); }
+  }
 }
 
 // ---------- 道具 ----------
@@ -344,22 +415,22 @@ function dropWeapon(f) {
   f.weapon = null;
 }
 function spawnItem() {
-  const ks = Object.keys(ITEMS);
+  const ks = Object.keys(ITEMS).filter((k) => ITEMS[k].st.includes(stage.id));
   let sum = 0; for (const k of ks) sum += ITEMS[k].w;
   let r = Math.random() * sum, kind = ks[0];
   for (const k of ks) { r -= ITEMS[k].w; if (r <= 0) { kind = k; break; } }
-  const it = { kind, uses: ITEMS[kind].uses || 1, x: rnd(30, AW - 30), z: rnd(6, WATER_Z - 12), y: 170, vy: 0, beam: 3 };
+  const it = { kind, uses: ITEMS[kind].uses || 1, x: rnd(arena.L + 30, arena.R - 30), z: rnd(8, WATER_Z - 12), y: 170, vy: 0, beam: 3 };
   items.push(it);
   if (Math.abs(it.x - (player ? player.x : 0)) < W) popup('道具掉下來了！');
 }
 function pickup(f) {
-  if (f.weapon || !onGround(f) || !free(f)) return;
+  if (f.isMob || f.weapon || !onGround(f) || !free(f)) return;
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     if (it.y > 2 || Math.abs(it.x - f.x) > 18 || Math.abs(it.z - f.z) > 11) continue;
     items.splice(i, 1);
     if (ITEMS[it.kind].magic) { castMagic(f); return; }
-    f.weapon = { kind: it.kind, uses: it.uses };
+    f.weapon = { kind: it.kind, uses: it.uses, spr: itemSpr(it.kind) };
     if (f.isPlayer) {
       hintN++;
       popup(ITEMS[it.kind].throw ? `撿到${ITEMS[it.kind].name}！按攻擊丟出去` : `撿到${ITEMS[it.kind].name}！攻擊鍵改用它打`, 'skill');
@@ -415,7 +486,7 @@ function doAttack(f) {
   if (f.weapon) {
     const W2 = ITEMS[f.weapon.kind];
     if (W2.throw) { setState(f, 'throw'); return; }
-    setState(f, f.weapon.kind === 'harpoon' ? 'thrust' : 'wswing');
+    setState(f, ITEMS[f.weapon.kind].thrust ? 'thrust' : 'wswing');
     return;
   }
   if (!onGround(f)) { if (!f.jatk) { f.jatk = true; setState(f, 'jatk'); } return; }
@@ -526,6 +597,7 @@ function aiControl(f, dt) {
   else if (t) { const side = sign(f.x - t.x); gx = t.x + side * (f.weapon && ITEMS[f.weapon.kind].melee ? 26 : 17); gz = t.z; }
   if (danger && f.z > WAVE_Z - 12) { gz = WAVE_Z * 0.35; gx = f.x; }
   for (const sk of skyS) if (sk.state !== 'flop' && Math.abs(sk.x - f.x) < 34 && Math.abs(sk.z - f.z) < 16 && Math.random() < 0.9) { gx = f.x + sign(f.x - sk.x) * 50; }
+  [gx, gz] = stageAvoid(f, gx, gz);
   if (gz > WATER_Z - 4 && !danger) gz = WATER_Z - 6;
   const dx = gx - f.x, dz = gz - f.z;
   c.mx = Math.abs(dx) > 4 ? clamp(dx / 20, -1, 1) : 0;
@@ -534,7 +606,7 @@ function aiControl(f, dt) {
   if (t) {
     const ddx = Math.abs(t.x - f.x), ddz = Math.abs(t.z - f.z);
     const reach = f.weapon ? (ITEMS[f.weapon.kind].reach || 120) : 24;
-    if (ddx < reach && ddz < 8 && Math.random() < TUNE.aiAttack * (0.6 + ai.aggr)) { f.face = sign(t.x - f.x); c.atk = true; c.mx = 0; }
+    if (ddx < reach && ddz < 8 && Math.random() < TUNE.aiAttack * (0.6 + ai.aggr) * (1 + stageIdx * 0.25)) { f.face = sign(t.x - f.x); c.atk = true; c.mx = 0; }
     if (Math.random() < TUNE.aiSkill) {
       const near2 = enemiesOf(f).filter((o) => Math.abs(o.x - f.x) < 42 && Math.abs(o.z - f.z) < 16).length;
       if (ddx < 34 && ddz < 10) c.near = true;
@@ -548,6 +620,11 @@ function aiControl(f, dt) {
   return c;
 }
 
+function stageAvoid(f, gx, gz) {
+  if (stage.id === 'road' && dozer.state !== 'wait' && Math.abs(f.z - dozer.z) < 22) gz = clamp(dozer.z + (f.z < dozer.z ? -26 : 26), 4, DEPTH - 4);
+  if (stage.id === 'arena') { if (f.x < arena.L + 34) gx = Math.max(gx, f.x + 40); if (f.x > arena.R - 34) gx = Math.min(gx, f.x - 40); }
+  return [gx, gz];
+}
 // 自動試玩（測試用）
 let autoPilot = false;
 function autoControl() {
@@ -559,6 +636,7 @@ function autoControl() {
   if (!f.weapon) { const it = items.find((i) => i.y < 2 && Math.abs(i.x - f.x) < 90); if (it) { gx = it.x; gz = it.z; } }
   if (danger && f.z > WAVE_Z - 12) { gz = 10; gx = f.x; }
   for (const sk of skyS) if (sk.state !== 'flop' && Math.abs(sk.x - f.x) < 34 && Math.abs(sk.z - f.z) < 16) gx = f.x + sign(f.x - sk.x) * 50;
+  [gx, gz] = stageAvoid(f, gx, gz);
   c.mx = Math.abs(gx - f.x) > 4 ? clamp((gx - f.x) / 20, -1, 1) : 0;
   c.my = Math.abs(gz - f.z) > 2 ? clamp((gz - f.z) / 10, -1, 1) : 0;
   const casual = autoPilot === 'casual';
@@ -594,7 +672,7 @@ function stepFighter(f, c, dt) {
   if (f.frozenT > 0) { f.frozenT -= dt; if (f.frozenT <= 0) setState(f, 'idle'); physics(f, dt); return; }
   if (f.stunT > 0) { f.stunT -= dt; if (f.state === 'stun' && f.stunT <= 0) setState(f, 'idle'); }
   const s = f.state, t = f.st;
-  const slow = (f.z > WATER_Z ? 0.6 : 1) * (f.slowT > 0 ? 0.5 : 1) * f.spd;
+  const slow = (stage.id === 'beach' && f.z > WATER_Z ? 0.6 : 1) * (f.slowT > 0 ? 0.5 : 1) * f.spd;
   if (s === 'idle' || s === 'walk') {
     f.vx = c.mx * TUNE.spdX * slow;
     f.vz = c.my * TUNE.spdZ * slow;
@@ -631,7 +709,7 @@ function stepFighter(f, c, dt) {
     f.vx = 0; f.vz = 0;
     const it = ITEMS[f.weapon ? f.weapon.kind : 'harpoon'];
     if (t > 0.1 && t < 0.2 && f.weapon) {
-      if (meleeCheck(f, it.reach, it.dmg, it.knock ? { knock: true, kb: 170 } : { kb: 70 }, 11) && !f.usedSwing) { f.usedSwing = true; }
+      if (meleeCheck(f, it.reach, it.dmg, { knock: !!it.knock, kb: it.knock ? 170 : 70, bleed: it.bleed, up: it.knock ? 150 : 0 }, 11) && !f.usedSwing) { f.usedSwing = true; }
     }
     if (t >= 0.32) {
       if (f.weapon && f.usedSwing) { f.weapon.uses--; if (f.weapon.uses <= 0) { if (f.isPlayer) popup(it.name + '壞了'); f.weapon = null; } }
@@ -711,7 +789,7 @@ function physics(f, dt) {
 }
 
 // ---------- 場地陷阱：海嘯、鯊魚、火、毒煙 ----------
-function updateHazards(dt) {
+function updateBeach(dt) {
   // 海嘯：先警告，然後從一邊捲到另一邊，靠海那一半的人全部遭殃
   wave.t -= dt;
   if (wave.state === 'wait' && wave.t <= 0) {
@@ -797,6 +875,85 @@ function updateHazards(dt) {
       if (sk.t <= 0) { blood(sk.x, sk.z, 6, 60, 70, 90); splat(sk.x, sk.z, 5); skyS.splice(i, 1); }
     }
   }
+}
+// 公路：絞肉推土機沿著一條車道開過去
+function updateRoad(dt) {
+  dozer.t -= dt;
+  if (dozer.state === 'wait' && dozer.t <= 0) {
+    dozer.state = 'warn'; dozer.t = 2.6; dozer.dir = Math.random() < 0.5 ? 1 : -1; dozer.z = rnd(28, 82);
+    popup('絞肉推土機來了！離開黃色車道！', 'bad'); sfx.rumble();
+  } else if (dozer.state === 'warn' && dozer.t <= 0) {
+    dozer.state = 'go'; dozer.x = dozer.dir > 0 ? -110 : AW + 110; dozer.hit = new Set();
+    shake = Math.max(shake, 3);
+  } else if (dozer.state === 'go') {
+    dozer.x += dozer.dir * 240 * dt;
+    const front = dozer.x + dozer.dir * 34;
+    if (Math.random() < 0.6) particles.push({ x: front, z: dozer.z + rnd(-10, 10), y: rnd(2, 20), vx: dozer.dir * rnd(40, 120), vz: rnd(-10, 10), vy: rnd(30, 90), c: Math.random() < 0.5 ? '#8a7a6a' : BLOOD[0], life: 0.5 });
+    for (const f of fighters.concat(mobs)) {
+      if (!f.alive || dozer.hit.has(f) || Math.abs(f.z - dozer.z) > 15 || Math.abs(f.x - front) > 24 || f.y > 26) continue;
+      dozer.hit.add(f);
+      f.invulT = 0;
+      blood(f.x, f.z, 14, 140, 130, 160); splat(f.x, f.z, 7); splat(f.x + dozer.dir * 14, f.z, 5);
+      hit(null, f, f.maxHp * 0.45, { knock: true, kb: 280, up: 190, bleed: 4, dir: dozer.dir, cause: 'dozer' });
+      sfx.splat(1);
+    }
+    for (let i = items.length - 1; i >= 0; i--) if (Math.abs(items[i].z - dozer.z) < 15 && Math.abs(items[i].x - front) < 24) items.splice(i, 1);
+    if ((dozer.dir > 0 && dozer.x > AW + 140) || (dozer.dir < 0 && dozer.x < -140)) { dozer.state = 'wait'; dozer.t = rnd(11, 15); }
+  }
+}
+// 城市：殭屍從兩邊一直湧進來
+function updateCity(dt) {
+  mobT -= dt;
+  const live = mobs.filter((m) => m.alive).length;
+  if (mobT <= 0) {
+    mobT = Math.max(1.6, 3.4 - stageT / 30);
+    if (live < Math.min(8, 3 + stageT / 15)) {
+      spawnZombie();
+      if (!zombieWarned) { zombieWarned = true; popup('殭屍來了！牠們見人就咬', 'bad'); }
+    }
+  }
+  for (let i = mobs.length - 1; i >= 0; i--) if (!mobs[i].alive) mobs.splice(i, 1);
+}
+function spawnZombie() {
+  const left = Math.random() < 0.5;
+  const m = makeFighter(100 + Math.floor(Math.random() * 9000), 'muscle', false);
+  Object.assign(m, { type: 'zombie', isMob: true, name: '殭屍', hp: 110, maxHp: 110, spd: 0.42, tint: 0, ai: null, biteCd: 1, biteT: 0,
+    x: left ? Math.max(10, camX - 24) : Math.min(AW - 10, camX + W + 24), z: rnd(15, 88) });
+  m.face = left ? 1 : -1;
+  mobs.push(m);
+}
+function zombieControl(m, dt) {
+  const c = { mx: 0, my: 0 };
+  m.biteCd -= dt; m.biteT -= dt;
+  let best = null, bd = 1e9;
+  for (const f of fighters) { if (!f.alive) continue; const d = Math.hypot(f.x - m.x, (f.z - m.z) * 2); if (d < bd) { bd = d; best = f; } }
+  if (!best) return c;
+  const dx = best.x - m.x, dz = best.z - m.z;
+  if (Math.abs(dx) > 13) c.mx = sign(dx);
+  c.my = Math.abs(dz) > 3 ? clamp(dz / 8, -1, 1) : 0;
+  if (Math.abs(dx) < 18 && Math.abs(dz) < 8 && m.biteCd <= 0 && free(m)) {
+    m.face = sign(dx) || 1; m.biteCd = 1.3; m.biteT = 0.35;
+    hit(m, best, best.maxHp * 0.05, { poison: 2, kb: 40, cause: 'zombie' });
+    sfx.bite(0.4);
+  }
+  return c;
+}
+// 決戰：地板從兩邊往中間崩塌，掉下去就死
+function updateArena(dt) {
+  if (stageT > 8 && arena.R - arena.L > 170) { arena.L += 5 * dt; arena.R -= 5 * dt; }
+  for (const f of fighters) {
+    if (!f.alive || f.y > 0.5 || (f.x >= arena.L && f.x <= arena.R)) continue;
+    blood(f.x, f.z, 2, 160, 90, 190); fx.push({ n: 'fx_bloodburst', x: f.x, z: f.z, y: 4, t: 0, dur: 0.5, k: 1.2 });
+    sfx.splat(1); shake = Math.max(shake, 3);
+    killF(f, time - f.lastByT < 4 ? f.lastBy : null, 'fall', sign(f.x - AW / 2));
+  }
+  for (let i = items.length - 1; i >= 0; i--) if (items[i].x < arena.L || items[i].x > arena.R) items.splice(i, 1);
+}
+function updateHazards(dt) {
+  if (stage.id === 'beach') updateBeach(dt);
+  else if (stage.id === 'road') updateRoad(dt);
+  else if (stage.id === 'city') updateCity(dt);
+  else updateArena(dt);
   // 地上的火（外送阿明的氮氣火龍）
   for (let i = fires.length - 1; i >= 0; i--) {
     const fr = fires[i];
@@ -860,14 +1017,19 @@ function updateShots(dt) {
           hit(s.owner, f, s.dmg, { stun: 0.8, kb: 0, dir });
           f.x = clamp(s.owner.x + s.owner.face * 16, 8, AW - 8); f.z = s.owner.z;
         } else if (s.kind === 'fireball') hit(s.owner, f, s.dmg, { knock: true, kb: 140, dir, burn: 2, cause: 'burn' });
-        else if (s.kind === 'coconut') hit(s.owner, f, s.dmg, { stun: ITEMS.coconut.stun, kb: 80, dir });
-        else if (s.kind === 'bottle') { hit(s.owner, f, s.dmg, { bleed: ITEMS.bottle.bleed, kb: 60, dir }); for (let k = 0; k < 10; k++) particles.push({ x: s.x, z: s.z, y: s.y, vx: rnd(-60, 60), vz: rnd(-20, 20), vy: rnd(20, 80), c: '#7ad890', life: 0.6 }); }
+        else if (ITEMS[s.kind] && ITEMS[s.kind].throw) {
+          const I = ITEMS[s.kind];
+          if (I.explode) bombs.push({ x: s.x, z: s.z, t: 0, owner: s.owner, dmg: I.dmg });
+          else hit(s.owner, f, s.dmg, { stun: I.stun, bleed: I.bleed, knock: !!I.knock, kb: I.knock ? 160 : 70, up: I.knock ? 140 : 0, dir });
+          if (s.kind === 'bottle') for (let k = 0; k < 10; k++) particles.push({ x: s.x, z: s.z, y: s.y, vx: rnd(-60, 60), vz: rnd(-20, 20), vy: rnd(20, 80), c: '#7ad890', life: 0.6 });
+        }
         else hit(s.owner, f, s.dmg, { kb: 50, dir });
         done = true;
         break;
       }
     }
     if (s.kind === 'fireball' && Math.random() < 0.8) particles.push({ x: s.x, z: s.z, y: s.y, vx: rnd(-20, 20), vz: 0, vy: rnd(0, 30), c: Math.random() < 0.5 ? '#ffb020' : '#ff4a10', life: 0.3 });
+    if (done && s.kind === 'barrel' && !s.boomed) { s.boomed = true; bombs.push({ x: s.x, z: s.z, t: 0, owner: s.owner, dmg: ITEMS.barrel.dmg }); }
     if (done) shots.splice(i, 1);
   }
 }
@@ -878,6 +1040,16 @@ function update(dt) {
   if (hitstop > 0) { hitstop -= dt; return; }
   if (phase === 'intro') { phaseT -= dt; if (phaseT <= 0) { phase = 'fight'; popup('開打！', 'kill'); sfx.beep(true); } }
   if (phase === 'fight' || phase === 'over') gameT += dt;
+  if (phase === 'fight') stageT += dt;
+  if (phase === 'clear') { phaseT -= dt; if (phaseT <= 0) loadStage(stageIdx + 1); }
+  if (player && !player.alive && player.respawnT > 0) {
+    player.respawnT -= dt;
+    if (player.respawnT <= 0) {
+      Object.assign(player, { alive: true, hp: player.maxHp * 0.6, x: clamp(camX + W / 2, arena.L + 30, arena.R - 30), z: 35, y: 0, vx: 0, vz: 0, vy: 0, kx: 0, invulT: 2.5, stunT: 0, poisonT: 0, bleedT: 0, burnT: 0, weapon: null });
+      setState(player, 'idle');
+      popup('復活！');
+    }
+  }
   if (phase === 'fight') {
     itemT -= dt;
     if (itemT <= 0) { itemT = rnd(4, 6.5); if (items.length < 4) spawnItem(); }
@@ -885,9 +1057,10 @@ function update(dt) {
   }
   for (const f of fighters) {
     if (!f.alive) continue;
-    const c = phase === 'intro' ? { mx: 0, my: 0 } : f.isPlayer ? (autoPilot ? autoControl() : playerControl(dt)) : aiControl(f, dt);
+    const c = phase !== 'fight' ? { mx: 0, my: 0 } : f.isPlayer ? (autoPilot ? autoControl() : playerControl(dt)) : aiControl(f, dt);
     stepFighter(f, c, dt);
   }
+  for (const m of mobs) if (m.alive) stepFighter(m, phase === 'fight' ? zombieControl(m, dt) : { mx: 0, my: 0 }, dt);
   // 互相推開
   const al = alive();
   for (let i = 0; i < al.length; i++) for (let j = i + 1; j < al.length; j++) {
@@ -930,7 +1103,13 @@ function update(dt) {
   for (let i = nums.length - 1; i >= 0; i--) { nums[i].t += dt; if (nums[i].t > 0.8) nums.splice(i, 1); }
   for (let i = fx.length - 1; i >= 0; i--) { fx[i].t += dt; if (fx[i].t > fx[i].dur) fx.splice(i, 1); }
   // 勝負
-  if (phase === 'fight' && al.length <= 1) { phase = 'over'; if (al[0]) al[0].place = 1; setTimeout(endGame, 1800); if (al[0] && al[0].isPlayer) popup('你是最後的倖存者！', 'kill'); }
+  const remain = fighters.filter((f) => f.alive || f.respawnT > 0).length;
+  if (phase === 'fight' && stage.target > 1 && remain <= stage.target && (player.alive || player.respawnT > 0)) {
+    phase = 'clear'; phaseT = 2.8;
+    banner('過關！', `剩下 ${remain} 人，準備進入下一關`);
+    sfx.beep(true);
+  }
+  if (phase === 'fight' && stage.target <= 1 && al.length <= 1) { phase = 'over'; if (al[0]) al[0].place = 1; setTimeout(endGame, 1800); if (al[0] && al[0].isPlayer) popup('你是最後的倖存者！', 'kill'); }
   // 攝影機
   const v = player.alive ? player : (al[0] || player);
   const want = clamp(v.x - W / 2 + v.face * 18, 0, AW - W);
@@ -965,8 +1144,8 @@ const SX = (x) => Math.round(x - camX + (shake > 0 ? (Math.random() - 0.5) * sha
 const SY = (z, y = 0) => Math.round(FLOOR_Y + z * ZS - y);
 let panoC = null;
 function drawBackground() {
-  if (!panoC && ART.PANO.swim) {
-    const src = ART.PANO.swim, h = FLOOR_Y + 6, w = Math.round((src.width * h) / src.height);
+  if (!panoC && ART.PANO[stage.pano]) {
+    const src = ART.PANO[stage.pano], h = FLOOR_Y + 6, w = Math.round((src.width * h) / src.height);
     panoC = document.createElement('canvas'); panoC.width = w * 2; panoC.height = h;
     const x = panoC.getContext('2d'); x.imageSmoothingEnabled = true;
     x.drawImage(src, 0, 0, w, h); x.save(); x.translate(w * 2, 0); x.scale(-1, 1); x.drawImage(src, 0, 0, w, h); x.restore();
@@ -975,8 +1154,8 @@ function drawBackground() {
     const off = -((camX * 0.3) % panoC.width);
     g.drawImage(panoC, Math.round(off), 0); g.drawImage(panoC, Math.round(off + panoC.width), 0);
   } else { g.fillStyle = '#ff8a50'; g.fillRect(0, 0, W, FLOOR_Y); }
-  // 後排的椰子樹、遮陽傘
-  const prop = ART.A.prop_beach;
+  // 後排的場景（每關不同）
+  const prop = stage.id === 'beach' ? ART.A.prop_beach : stage.id === 'road' ? ART.A.prop_pine : null;
   if (prop) {
     g.imageSmoothingEnabled = true;
     const ph = 46, pw = (prop.width * ph) / prop.height;
@@ -987,11 +1166,19 @@ function drawBackground() {
     g.imageSmoothingEnabled = false;
   }
   // 場地最遠處（沙灘後排）的救生員塔、遮陽傘、鯊魚警告牌
-  const back = [['prop_tower', 90, 0.62], ['prop_umbrella', 230, 0.55], ['prop_sharksign', 330, 0.6], ['prop_umbrella', 470, 0.5], ['prop_tower', 560, 0.62]];
+  const back = {
+    beach: [['prop_tower', 90, 0.62], ['prop_umbrella', 230, 0.55], ['prop_sharksign', 330, 0.6], ['prop_umbrella', 470, 0.5], ['prop_tower', 560, 0.62]],
+    road: [['prop_barrier', 80, 0.55], ['prop_barrel', 190, 0.55], ['prop_barrier', 330, 0.55], ['prop_barrel', 450, 0.55], ['prop_barrier', 560, 0.55]],
+    city: [['prop_lamp', 50, 0.55], ['prop_hydrant', 140, 0.6], ['prop_trash', 220, 0.6], ['prop_lamp', 310, 0.55], ['prop_cone', 400, 0.6], ['prop_trash', 480, 0.6], ['prop_lamp', 570, 0.55]],
+    arena: [],
+  }[stage.id];
   for (const [n, x, k] of back) { const sx = x - camX; if (sx > -60 && sx < W + 60) SP.drawSprite(g, n, sx, FLOOR_Y + 3, k); }
 }
 function drawFloor() {
   g.drawImage(floor, Math.round(camX), 0, W, FH, 0, FLOOR_Y, W, FH);
+  if (stage.id === 'road' && dozer.state === 'warn') drawDozerWarning();
+  if (stage.id === 'arena') drawArenaEdges();
+  if (stage.id !== 'beach') return;
   // 海浪拍打的白線
   const wy = SY(WATER_Z);
   for (let x = 0; x < W; x += 2) {
@@ -1006,6 +1193,39 @@ function drawFloor() {
     g.fillStyle = `rgba(40,110,220,${a})`;
     const y0 = SY(WAVE_Z), x0 = wave.state === 'go' ? (wave.dir > 0 ? 0 : SX(wave.x)) : 0, x1 = wave.state === 'go' ? (wave.dir > 0 ? SX(wave.x) : W) : W;
     g.fillRect(Math.max(0, x0), y0, Math.max(0, Math.min(W, x1) - Math.max(0, x0)), SY(DEPTH) - y0 + 4);
+  }
+}
+// 推土機警告：要開過去的那條車道畫黃黑斜紋
+function drawDozerWarning() {
+  const y0 = SY(dozer.z - 15), y1 = SY(dozer.z + 15);
+  const off = Math.floor(time * 30) % 12;
+  g.fillStyle = 'rgba(255,210,0,0.25)'; g.fillRect(0, y0, W, y1 - y0);
+  g.fillStyle = 'rgba(20,10,20,0.35)';
+  for (let y = y0; y < y1; y++) for (let x = -12 + ((y - y0 + off) % 12); x < W; x += 12) g.fillRect(x, y, 5, 1);
+  for (let x = 0; x < W; x += 8) { g.fillStyle = Math.floor(time * 8 + x / 8) % 2 ? '#ffd000' : '#1a1028'; g.fillRect(x, y0 - 1, 5, 2); g.fillRect(x, y1, 5, 2); }
+  if (Math.floor(time * 5) % 2) {
+    const left = dozer.dir > 0, ay = Math.round((y0 + y1) / 2);
+    g.fillStyle = '#ffd000';
+    for (let i = 0; i < 10; i++) g.fillRect(left ? 2 + i : W - 3 - i, ay - 10 + i, 1, 20 - i * 2);
+  }
+  const n = String(Math.ceil(dozer.t));
+  drawText(g, 'BULLDOZER', W / 2 - textW('BULLDOZER', 1) / 2, y0 + 3, 1, '#ffffff');
+  drawText(g, n, W / 2 - textW(n, 3) / 2, y0 + 11, 3, '#ffd000');
+}
+// 競技場：崩塌的兩邊變成血池，快塌的地方閃紅
+function drawArenaEdges() {
+  const y0 = SY(0), y1 = SY(DEPTH) + 4;
+  for (const [a, b] of [[0, arena.L], [arena.R, AW]]) {
+    const x0 = clamp(SX(a), 0, W), x1 = clamp(SX(b), 0, W);
+    if (x1 <= x0) continue;
+    g.fillStyle = '#6a000c'; g.fillRect(x0, y0, x1 - x0, y1 - y0);
+    g.fillStyle = '#9a1020';
+    for (let y = y0; y < y1; y += 4) for (let x = x0 + ((y + Math.floor(time * 10)) % 9); x < x1; x += 9) g.fillRect(x, y, 3, 1);
+  }
+  if (stageT > 8 && arena.R - arena.L > 170 && Math.floor(time * 6) % 2) {
+    g.fillStyle = 'rgba(255,20,40,0.35)';
+    const l = SX(arena.L), r = SX(arena.R);
+    g.fillRect(l, y0, 18, y1 - y0); g.fillRect(r - 18, y0, 18, y1 - y0);
   }
 }
 // 海嘯警告：危險區畫紅色斜紋、邊界線，海水慢慢漲到會淹到的位置，來的方向閃大箭頭
@@ -1040,7 +1260,8 @@ function render() {
   // 依前後順序畫
   const list = [];
   for (const it of items) list.push({ z: it.z, d: () => drawItem(it) });
-  for (const c of corpses) list.push({ z: c.z - 0.5, d: () => SP.drawFighterArt(g, c.f, SX(c.x), SY(c.z), time) || drawFighter(g, c.f, SX(c.x), SY(c.z), time, { headless: true }) });
+  for (const c of corpses) if (c.mob) list.push({ z: c.z - 0.5, d: () => SP.drawSprite(g, 'zombie_dead', SX(c.x), SY(c.z) + 2, SP.CHAR_SCALE, c.f.face < 0) });
+  for (const c of corpses) if (!c.mob) list.push({ z: c.z - 0.5, d: () => SP.drawFighterArt(g, c.f, SX(c.x), SY(c.z), time) || drawFighter(g, c.f, SX(c.x), SY(c.z), time, { headless: true }) });
   for (const f of fighters) if (f.alive) list.push({ z: f.z, d: () => drawOne(f) });
   for (const s of shots) list.push({ z: s.z, d: () => drawShot(s) });
   for (const c of chunks) list.push({ z: c.z, d: () => {
@@ -1048,7 +1269,9 @@ function render() {
     if (SP.S[c.f.type + '_head']) { SP.drawSprite(g, c.f.type + '_head', SX(c.x), SY(c.z, c.y), 0.42, c.f.face < 0, 1, c.rot); return; }
     g.save(); g.translate(SX(c.x), SY(c.z, c.y + 5)); g.rotate(c.rot); drawHead(g, c.f, [0, 0], c.f.face); dot(g, 0, 5, 2.4, '#c01028'); g.restore();
   } });
-  for (const sk of sharks) list.push({ z: DEPTH - 6, d: () => drawShark(sk) });
+  if (stage.id === 'beach') for (const sk of sharks) list.push({ z: DEPTH - 6, d: () => drawShark(sk) });
+  if (stage.id === 'road' && dozer.state === 'go') list.push({ z: dozer.z, d: () => SP.drawSprite(g, 'dozer' + (Math.floor(time * 10) % 2), SX(dozer.x), SY(dozer.z) + 6, 0.62, dozer.dir < 0) });
+  for (const m of mobs) if (m.alive) list.push({ z: m.z, d: () => drawZombie(m) });
   for (const sk of skyS) list.push({ z: sk.z, d: () => drawSkyShark(sk) });
   for (const b of bombs) list.push({ z: b.z, d: () => { const sx = SX(b.x), sy = SY(b.z); if (SP.drawSprite(g, 'fx_bombbox', sx, sy + 1, 0.7 + Math.sin(time * 30) * 0.05)) return; g.fillStyle = OUT; g.fillRect(sx - 6, sy - 11, 12, 11); g.fillStyle = '#f08a20'; g.fillRect(sx - 5, sy - 10, 10, 9); g.fillStyle = Math.floor(time * 16) % 2 ? '#ff2020' : '#ffffff'; g.fillRect(sx - 1, sy - 15, 2, 4); } });
   list.sort((a, b) => a.z - b.z);
@@ -1092,7 +1315,7 @@ function drawOne(f) {
   drawShadow(f.x, f.z, 7);
   const sx = SX(f.x), sy = SY(f.z, f.y);
   if (f.invulT > 0 && f.state === 'idle' && Math.floor(time * 20) % 2) return;
-  if (f.z > WATER_Z && f.y < 2) {
+  if (stage.id === 'beach' && f.z > WATER_Z && f.y < 2) {
     // 在水裡：下半身泡在水中
     g.save(); g.beginPath(); g.rect(sx - 40, sy - 80, 80, 72); g.clip();
     SP.drawFighterArt(g, f, sx, sy, time) || drawFighter(g, f, sx, sy, time);
@@ -1106,6 +1329,13 @@ function drawOne(f) {
   g.fillStyle = OUT; g.fillRect(sx - bw / 2 - 1, hy, bw + 2, 3);
   g.fillStyle = f.isPlayer ? '#40e070' : '#ff3040'; g.fillRect(sx - bw / 2, hy + 1, Math.round(bw * hp), 1);
   if (f.isPlayer) { g.fillStyle = '#ffe000'; const yy = hy - 7 + Math.round(Math.sin(time * 6)); g.fillRect(sx - 2, yy, 5, 2); g.fillRect(sx - 1, yy + 2, 3, 1); g.fillRect(sx, yy + 3, 1, 1); }
+}
+function drawZombie(m) {
+  drawShadow(m.x, m.z, 7);
+  const n = m.biteT > 0 ? 'zombie_bite' : ['fly', 'down', 'getup'].includes(m.state) ? 'zombie_dead' : m.state === 'walk' ? 'zombie' + (Math.floor(m.walkPh / 2) % 2) : 'zombie0';
+  const sx = SX(m.x), sy = SY(m.z, m.y);
+  SP.drawSprite(g, n, sx, sy, SP.CHAR_SCALE, m.face < 0, m.flashT > 0 ? 0.6 : 1);
+  if (m.hp < m.maxHp) { const bw = 14; g.fillStyle = OUT; g.fillRect(sx - bw / 2 - 1, sy - 50, bw + 2, 3); g.fillStyle = '#7ad850'; g.fillRect(sx - bw / 2, sy - 49, Math.round((bw * m.hp) / m.maxHp), 1); }
 }
 function drawItem(it) {
   const gx = SX(it.x), gy = SY(it.z);
@@ -1126,7 +1356,7 @@ function drawItem(it) {
   const sx = gx, sy = SY(it.z, it.y + 6 + Math.sin(time * 4 + it.x) * 2);
   g.save(); g.translate(sx, sy); g.scale(1.6, 1.6);
   if (it.kind === 'magic') { const im = ART.A.icon_qbox; if (im) { g.imageSmoothingEnabled = true; g.drawImage(im, -7, -10, 14, 14); g.imageSmoothingEnabled = false; } }
-  else if (!SP.drawSprite(g, 'it_' + it.kind, 0, 4, 0.32)) drawWeapon(g, it.kind, [-6, 0], 1.3, 1);
+  else if (!SP.drawSprite(g, itemSpr(it.kind), 0, 4, 0.32)) drawWeapon(g, it.kind, [-6, 0], 1.3, 1);
   g.restore();
   // 上面一個跳動的箭頭
   if (it.y < 2) { g.fillStyle = '#ffe000'; const ay = sy - 26 + Math.round(Math.sin(time * 6) * 2); for (let i = 0; i < 4; i++) g.fillRect(sx - 3 + i, ay + i, 7 - i * 2, 1); }
@@ -1145,7 +1375,7 @@ function drawShot(s) {
   } else if (s.kind === 'fireball') {
     const im = ART.A.fx_fireball;
     if (im) { g.imageSmoothingEnabled = true; g.save(); g.translate(sx, sy); if (s.vx < 0) g.scale(-1, 1); g.drawImage(im, -9, -8, 18, 16); g.restore(); g.imageSmoothingEnabled = false; }
-  } else if (!SP.drawSprite(g, 'it_' + s.kind, sx, sy + 6, 0.6, false, 1, time * 15)) drawWeapon(g, s.kind, [sx, sy], time * 15, 1);
+  } else if (!SP.drawSprite(g, itemSpr(s.kind), sx, sy + 6, 0.6, false, 1, time * 15)) drawWeapon(g, s.kind, [sx, sy], time * 15, 1);
 }
 function drawShark(sk) {
   const sx = SX(sk.x), sy = SY(DEPTH - 6);
@@ -1247,6 +1477,7 @@ function drawHud() {
       drawText(g, 'UIO'[k], x + 1, y + 1, 1, '#ffd000', null);
     });
   }
+  drawText(g, `STAGE ${stageIdx + 1}/4  GOAL ${stage.target}`, 4, 41, 1, '#ffd0d8');
   if (phase === 'intro') { const n = Math.ceil(phaseT); if (n > 0 && n <= 2) drawText(g, String(n), W / 2 - 15, H * 0.4, 10, '#ffffff'); }
 }
 
@@ -1255,6 +1486,8 @@ const lastBtn = {};
 const WICON = {};
 function weaponIcon(kind) {
   if (WICON[kind]) return WICON[kind];
+  const sp = SP.S[itemSpr(kind)];
+  if (sp) { const c = document.createElement('canvas'); c.width = c.height = 48; const x = c.getContext('2d'); const k = Math.min(44 / sp.c.width, 44 / sp.c.height); x.drawImage(sp.c, 24 - (sp.c.width * k) / 2, 24 - (sp.c.height * k) / 2, sp.c.width * k, sp.c.height * k); return (WICON[kind] = c.toDataURL()); }
   const c = document.createElement('canvas'); c.width = c.height = 40;
   const x = c.getContext('2d'); x.translate(20, 22); x.scale(2, 2);
   drawWeapon(x, kind, [-6, 0], 1.3, 1);
@@ -1336,13 +1569,13 @@ Promise.all([ART.ready, SP.ready]).then(() => {
 // ---------- 除錯與自動試玩 ----------
 window.dbg = {
   TUNE, stats, keys, touch,
-  get player() { return player; }, get fighters() { return fighters; }, get skyS() { return skyS; }, setSkyT(v) { skyT = v; }, get phase() { return phase; }, get wave() { return wave; }, get items() { return items; },
+  get player() { return player; }, get mobs() { return mobs; }, get stageIdx() { return stageIdx; }, stage(i) { loadStage(i); }, get dozer() { return dozer; }, get arena() { return arena; }, get fighters() { return fighters; }, get skyS() { return skyS; }, setSkyT(v) { skyT = v; }, get phase() { return phase; }, get wave() { return wave; }, get items() { return items; },
   autopilot(casual = false) { autoPilot = casual ? 'casual' : 'pro'; }, manual() { autoPilot = false; },
   start(i) { ended = false; $('result').classList.add('hidden'); startGame(TYPES[i]); },
   advance(sec) { for (let i = 0; i < sec * 60; i++) update(1 / 60); render(); },
   run(maxSec = 300) {
     for (let i = 0; i < maxSec * 60 && !(phase === 'over'); i++) update(1 / 60);
-    return { won: player.alive && alive().length <= 1, place: player.alive ? 1 : player.place, kills: player.kills, time: +gameT.toFixed(1), cause: { ...stats.cause }, hp: Math.round(player.hp) };
+    return { stage: stageIdx + 1, won: player.alive && alive().length <= 1, place: player.alive ? 1 : player.place, kills: player.kills, time: +gameT.toFixed(1), cause: { ...stats.cause }, hp: Math.round(player.hp) };
   },
   render,
 };

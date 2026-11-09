@@ -107,7 +107,7 @@ export function drawFighterArt(g, f, sx, sy, time, opts = {}) {
   g.imageSmoothingEnabled = true;
   g.drawImage(c, -fr.ax * k, -fr.ay * k, w, h);
   if (f.weapon && !opts.noWeapon && f.state !== 'roll' && !['fly', 'down', 'getup', 'corpse'].includes(f.state)) {
-    const it = S['it_' + f.weapon.kind];
+    const it = S[f.weapon.spr || 'it_' + f.weapon.kind];
     if (it) {
       g.save();
       g.translate(w * 0.22, -h * 0.5);
