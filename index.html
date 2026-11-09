@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>打人三項</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #120004; color: #fff;
+      font-family: "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif; user-select: none; -webkit-user-select: none; touch-action: none; }
+    #app, #app canvas { position: fixed; inset: 0; display: block; }
+    .hidden { display: none !important; }
+
+    /* 畫面濺血 */
+    #splat, #ink, #vignette { position: fixed; inset: 0; pointer-events: none; opacity: 0; }
+    #splat { z-index: 5; }
+    #ink { z-index: 5; background:
+      radial-gradient(circle at 30% 40%, #050505 0, #050505 22%, transparent 24%),
+      radial-gradient(circle at 70% 55%, #0a0a12 0, #0a0a12 26%, transparent 28%),
+      radial-gradient(circle at 50% 80%, #050505 0, #050505 18%, transparent 20%),
+      radial-gradient(circle at 20% 75%, #08080c 0, #08080c 12%, transparent 14%); }
+    #vignette { z-index: 4; box-shadow: inset 0 0 180px 60px rgba(220,0,0,.8); }
+
+    #hud { position: fixed; inset: 0; pointer-events: none; z-index: 6; text-shadow: 0 2px 3px #000, 0 0 8px #000; }
+    #topLeft { position: absolute; left: 16px; top: 12px; }
+    #stageName { font-size: 18px; font-weight: bold; color: #ffb0b0; }
+    #timer { font-size: 34px; font-weight: 900; }
+    #timer.warn { color: #ff3030; }
+    #topCenter { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); text-align: center; }
+    #aliveBox { background: rgba(120,0,0,.75); border: 2px solid #ff4040; border-radius: 10px; padding: 4px 18px; }
+    #alive { font-size: 36px; font-weight: 900; }
+    #alive::before { content: "存活 "; font-size: 16px; }
+    #aliveTarget { display: block; font-size: 13px; color: #ffd0d0; }
+    #topRight { position: absolute; right: 16px; top: 12px; text-align: right; font-size: 18px; font-weight: bold; line-height: 1.4; }
+    #rank { font-size: 24px; color: #ffe000; }
+    #minimap { position: absolute; right: 16px; top: 120px; border-radius: 8px; }
+    #killfeed { position: absolute; left: 16px; top: 90px; font-size: 14px; line-height: 1.6; max-width: 46vw; }
+    #killfeed .mine { color: #ffe000; font-weight: bold; }
+    #bottomLeft { position: absolute; left: 16px; bottom: 18px; width: 240px; }
+    #hpWrap { height: 18px; background: rgba(0,0,0,.6); border: 2px solid #fff; border-radius: 9px; overflow: hidden; }
+    #hpBar { height: 100%; width: 100%; background: #3ad13a; transition: width .15s; }
+    #hpText { font-size: 14px; margin-top: 2px; }
+    #itemSlot { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); width: 110px; height: 110px;
+      background: rgba(0,0,0,.55); border: 3px solid #888; border-radius: 16px; text-align: center; }
+    #itemSlot.has { border-color: #ffe000; box-shadow: 0 0 18px #ffb000; }
+    #itemIcon { font-size: 52px; line-height: 76px; height: 76px; }
+    #itemName { font-size: 14px; font-weight: bold; }
+    #center { position: absolute; left: 50%; top: 34%; transform: translate(-50%,-50%) scale(.6); font-size: 30px; font-weight: 900;
+      opacity: 0; transition: opacity .2s, transform .2s; text-align: center; white-space: nowrap; }
+    #center.show { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+    #center.big { font-size: 40px; }
+    #center.huge { font-size: 110px; }
+    #center.red { color: #ff2a2a; }
+    .popup { position: absolute; left: 50%; top: 45%; transform: translateX(-50%); font-size: 30px; font-weight: 900; color: #ffe000;
+      animation: up 1.2s ease-out forwards; }
+    @keyframes up { from { opacity: 1; margin-top: 0; } to { opacity: 0; margin-top: -80px; } }
+    #ghostTip { position: absolute; left: 50%; bottom: 140px; transform: translateX(-50%); background: rgba(40,60,90,.7);
+      padding: 6px 14px; border-radius: 8px; font-size: 15px; white-space: nowrap; }
+
+    /* 手機觸控 */
+    #touch { position: fixed; inset: 0; z-index: 7; pointer-events: none; }
+    #stickZone { position: absolute; left: 0; bottom: 0; width: 45%; height: 60%; pointer-events: auto; }
+    #stickBase { position: absolute; left: 40px; bottom: 50px; width: 130px; height: 130px; border-radius: 50%;
+      background: rgba(255,255,255,.12); border: 2px solid rgba(255,255,255,.35); }
+    #knob { position: absolute; left: 35px; top: 35px; width: 60px; height: 60px; border-radius: 50%; background: rgba(255,255,255,.55); }
+    #touch button { position: absolute; pointer-events: auto; border-radius: 50%; border: 3px solid #fff; color: #fff;
+      font-size: 22px; font-weight: 900; font-family: inherit; }
+    #btnPunch { right: 30px; bottom: 50px; width: 96px; height: 96px; background: rgba(200,0,0,.7); }
+    #btnItem { right: 140px; bottom: 30px; width: 80px; height: 80px; background: rgba(220,160,0,.7); font-size: 18px; }
+    #btnFfwd { right: 140px; bottom: 130px; width: 70px; height: 70px; background: rgba(60,90,140,.7); font-size: 16px; }
+    @media (pointer: coarse) {
+      #itemSlot { left: auto; right: 36px; transform: none; width: 84px; height: 84px; bottom: 165px; }
+      #itemIcon { font-size: 38px; line-height: 58px; height: 58px; }
+      #itemName { font-size: 11px; }
+      #bottomLeft { left: 50%; transform: translateX(-50%); top: 76px; bottom: auto; width: 160px; }
+      #killfeed { top: 120px; font-size: 12px; }
+      #topRight { font-size: 14px; }
+      #rank { font-size: 18px; }
+      #center.huge { font-size: 80px; }
+      #center.big { font-size: 26px; }
+    }
+
+    /* 選單與結算 */
+    .screen { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at center, rgba(70,0,10,.88), rgba(10,0,2,.96)); padding: 16px; text-align: center; overflow-y: auto; }
+    .title { font-size: clamp(56px, 13vw, 120px); font-weight: 900; color: #e00010; letter-spacing: 6px; line-height: 1.1;
+      text-shadow: 0 4px 0 #600, 0 10px 30px #f00, 0 0 2px #fff; position: relative; }
+    .drips { display: flex; justify-content: center; gap: 22px; height: 46px; margin-bottom: 8px; }
+    .drips i { width: 9px; background: linear-gradient(#e00010, #800); border-radius: 0 0 6px 6px; animation: drip 2.6s ease-in infinite; }
+    .drips i:nth-child(2n) { animation-delay: .7s; } .drips i:nth-child(3n) { animation-delay: 1.4s; }
+    @keyframes drip { 0% { height: 0; } 70% { height: 46px; opacity: 1; } 100% { height: 46px; opacity: 0; } }
+    .sub { font-size: 18px; color: #ffbcbc; margin-bottom: 22px; max-width: 560px; line-height: 1.6; }
+    .opts { display: flex; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; justify-content: center; }
+    .opts label { background: rgba(0,0,0,.5); border: 2px solid #800; border-radius: 10px; padding: 10px 18px; cursor: pointer; font-size: 17px; }
+    .opts input { margin-right: 6px; }
+    .opts label:has(input:checked) { border-color: #ff3030; background: rgba(150,0,0,.6); }
+    .btn { font-family: inherit; font-size: 26px; font-weight: 900; color: #fff; background: linear-gradient(#ff2020, #900);
+      border: 3px solid #fff; border-radius: 14px; padding: 12px 46px; cursor: pointer; box-shadow: 0 6px 0 #500, 0 0 30px #f00; }
+    .btn:active { transform: translateY(4px); box-shadow: 0 2px 0 #500; }
+    .help { margin-top: 22px; font-size: 14px; color: #d8a0a0; line-height: 1.8; }
+    .help kbd { background: #333; border: 1px solid #777; border-radius: 4px; padding: 0 6px; color: #fff; font-family: inherit; }
+    .panel { background: rgba(0,0,0,.55); border: 2px solid #a00; border-radius: 14px; padding: 18px 26px; min-width: 300px; margin: 16px 0 20px; }
+    .panel .row { display: flex; justify-content: space-between; gap: 30px; font-size: 18px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
+    .panel .next { margin-top: 12px; color: #ffe000; font-weight: bold; }
+    h2 { font-size: 34px; color: #ff4040; }
+    h2.win { color: #ffe000; font-size: 40px; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="vignette"></div>
+  <div id="splat"></div>
+  <div id="ink"></div>
+
+  <div id="hud" class="hidden">
+    <div id="topLeft"><div id="stageName"></div><div id="timer"></div></div>
+    <div id="topCenter"><div id="aliveBox"><span id="alive">100</span><small id="aliveTarget"></small></div></div>
+    <div id="topRight"><div id="rank"></div><div id="kills"></div><div id="score"></div></div>
+    <canvas id="minimap" width="64" height="220"></canvas>
+    <div id="killfeed"></div>
+    <div id="bottomLeft"><div id="hpWrap"><div id="hpBar"></div></div><div id="hpText"></div></div>
+    <div id="itemSlot"><div id="itemIcon"></div><div id="itemName"></div></div>
+    <div id="center"></div>
+    <div id="ghostTip" class="hidden">👻 幽靈模式：移動飛行、<b>空白鍵</b>丟香蕉皮害人、<b>Enter</b> 快轉</div>
+  </div>
+
+  <div id="touch" class="hidden">
+    <div id="stickZone"><div id="stickBase"><div id="knob"></div></div></div>
+    <button id="btnItem">道具</button>
+    <button id="btnPunch">揍</button>
+    <button id="btnFfwd" class="hidden">快轉</button>
+  </div>
+
+  <div id="menu" class="screen">
+    <div class="title">打人三項</div>
+    <div class="drips"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="sub">游泳 → 單車 → 跑步 → 血池決戰<br>邊比賽邊把其他選手幹掉，活到最後的才是冠軍。</div>
+    <div class="opts">
+      <label><input type="radio" name="count" value="100" checked>100 人（電腦）</label>
+      <label><input type="radio" name="count" value="30">30 人（手機／效能不足）</label>
+    </div>
+    <button id="startBtn" class="btn">開始屠殺</button>
+    <div class="help">
+      <kbd>W A S D</kbd> 或方向鍵 移動　<kbd>F</kbd> / <kbd>J</kbd> 揍人　<kbd>空白鍵</kbd> 使用道具<br>
+      撿「?」箱子拿武器：鯊魚、斧頭、手榴彈、電鋸…… 名次越後面越容易拿到強武器<br>
+      前兩關死了會復活；第三關開始只有一條命，死了變幽靈繼續搗亂
+    </div>
+  </div>
+
+  <div id="result" class="screen hidden">
+    <h2 id="resTitle"></h2>
+    <div id="resBody" class="panel"></div>
+    <button id="nextBtn" class="btn">下一關</button>
+  </div>
+
+  <div id="over" class="screen hidden">
+    <h2 id="overTitle"></h2>
+    <div id="overBody" class="panel"></div>
+    <button id="againBtn" class="btn">再殺一場</button>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

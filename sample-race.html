@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0c0612" />
+  <title>打人三項</title>
+  <style>
+    html, body { margin: 0; width: 100vw; height: 100vh; height: 100dvh; background: #0c0612; overflow: hidden; overscroll-behavior: none; }
+    body { font-family: "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif; color: #fff; user-select: none; -webkit-user-select: none;
+      touch-action: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+    body.landscape { display: flex; align-items: center; justify-content: center; }
+    body.portrait { display: flex; flex-direction: column; align-items: center; width: 100vw; }
+    #game { position: relative; overflow: hidden; flex: none; }
+    #c { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+    .hidden { display: none !important; }
+    .shadow { text-shadow: 3px 3px 0 #1a1028, -2px -2px 0 #1a1028, 2px -2px 0 #1a1028, -2px 2px 0 #1a1028; }
+
+    #splat { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+    #pops { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); pointer-events: none; text-align: center; }
+    .pop { font-size: clamp(22px, 7vw, 38px); font-weight: 900; white-space: nowrap; animation: pop 1.1s ease-out forwards;
+      text-shadow: 3px 3px 0 #1a1028, -2px -2px 0 #1a1028, 2px -2px 0 #1a1028, -2px 2px 0 #1a1028; }
+    .pop.kill { color: #ff3040; font-size: clamp(28px, 9vw, 48px); }
+    .pop.pass { color: #7dff7a; }
+    .pop.skill { color: #ffd000; }
+    .pop.bad { color: #ff6070; }
+    @keyframes pop { 0% { transform: scale(1.6); opacity: 1; } 20% { transform: scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translateY(-30px); } }
+    #feed { position: absolute; left: 8px; top: 30%; font-size: 12px; line-height: 1.6; pointer-events: none;
+      text-shadow: 2px 2px 0 #1a1028, -1px -1px 0 #1a1028; }
+    #feed .mine { color: #ffe000; font-weight: bold; }
+
+    /* 觸控按鈕 */
+    #touch { display: flex; gap: 8px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); box-sizing: border-box; }
+    body.portrait #touch { width: 100vw; height: 210px; flex: none; background: #160a20; border-top: 3px solid #2a1840; }
+    body.landscape #touch { position: fixed; left: 0; right: 0; bottom: 0; height: 150px; pointer-events: none; }
+    body.landscape #touch > * { pointer-events: auto; }
+    #steerPad { flex: 1; position: relative; background: #2a1840; border: 3px solid #f0e0ff; box-shadow: 0 0 0 3px #1a1028;
+      display: flex; align-items: center; justify-content: center; touch-action: none; }
+    body.landscape #steerPad { flex: none; width: 34%; opacity: .75; }
+    #steerPad .hint { position: absolute; top: 6px; width: 100%; text-align: center; font-size: 13px; color: #c8b8e8; }
+    #steerPad .arrows { position: absolute; width: 100%; display: flex; justify-content: space-between; padding: 0 12px; box-sizing: border-box; font-size: 26px; color: #6a5a8a; }
+    #steerKnob { width: 66px; height: 66px; background: #ffd000; border: 3px solid #fff; box-shadow: 0 0 0 3px #1a1028; border-radius: 50%; }
+    #btns { flex: 1.25; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 1fr; gap: 8px; }
+    body.landscape #btns { flex: none; width: 42%; margin-left: auto; opacity: .85; }
+    #btns button { font-family: inherit; color: #fff; font-weight: 900; font-size: 15px; border: 3px solid #fff; box-shadow: 0 0 0 3px #1a1028;
+      background: #4a3070; background-repeat: no-repeat; background-position: center 30%; background-size: 46%; image-rendering: pixelated;
+      display: flex; align-items: flex-end; justify-content: center; padding-bottom: 4px; touch-action: none; }
+    #btns button.on { transform: translateY(2px); filter: brightness(1.3); }
+    #btnSlash { grid-column: span 2; background: #d01828 !important; font-size: 28px !important; align-items: center !important; }
+    #btnItem.ready { background-color: #b07000; animation: glow 1s infinite; }
+    #btnSkill { background-size: 60% !important; }
+    #btnSkill.ready { background-color: #1a6aa0; animation: glow 1s infinite; }
+    #btnBack { background: #3a3a5a !important; }
+    #btnDrift { background: #2a6a4a !important; }
+    @keyframes glow { 50% { box-shadow: 0 0 0 3px #1a1028, 0 0 14px #ffd000; } }
+
+    .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(20,8,30,.6); padding: 12px; overflow-y: auto; box-sizing: border-box; touch-action: pan-y; }
+    h1 { margin: 0 0 4px; font-size: clamp(36px, 10vw, 52px); color: #ff2a3a; letter-spacing: 6px; text-shadow: 4px 4px 0 #1a1028, 0 0 24px #f00; }
+    .sub { margin-bottom: 14px; font-size: 16px; color: #ffd0d8; text-align: center; }
+    #cards { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+    .card { position: relative; width: 190px; background: #2a1840; border: 3px solid #f0e0ff; box-shadow: 0 0 0 3px #1a1028, 6px 6px 0 #1a1028;
+      color: #fff; font-family: inherit; padding: 10px; cursor: pointer; text-align: left; }
+    .card:hover { background: #4a2a70; }
+    .card .num { position: absolute; right: 8px; top: 6px; color: #ffd000; font-weight: 900; font-size: 20px; }
+    .portrait { width: 110px; height: 110px; image-rendering: pixelated; display: block; margin: 0 auto 6px; background: #3a2458; }
+    .card .nm { font-size: 20px; font-weight: 900; text-align: center; }
+    .card .sk { color: #ffd000; font-weight: bold; margin: 4px 0 2px; font-size: 14px; }
+    .card .ds { font-size: 12px; color: #d8c8f0; min-height: 30px; }
+    .bar { display: flex; align-items: center; gap: 6px; font-size: 11px; margin-top: 3px; }
+    .bar span { width: 28px; }
+    .bar i { display: block; height: 7px; background: linear-gradient(90deg, #40e070, #ffd000); border: 1px solid #1a1028; }
+    body.portrait .card { width: calc(50vw - 24px); padding: 8px; }
+    body.portrait .portrait { width: 72px; height: 72px; }
+    body.portrait .card .ds { display: none; }
+    body.portrait .card .num { display: none; }
+    .keys { margin-top: 14px; font-size: 13px; color: #e8d8ff; line-height: 1.8; text-align: center; background: rgba(26,16,40,.85); padding: 6px 14px; border: 2px solid #f0e0ff; max-width: 680px; }
+    .keys b { color: #ffd000; }
+    body.touch .keys .kb { display: none; }
+    body:not(.touch) .keys .tc { display: none; }
+    .panel { background: #2a1840; border: 3px solid #f0e0ff; box-shadow: 0 0 0 3px #1a1028; padding: 14px 24px; min-width: 240px; margin: 12px 0; }
+    .panel .row { display: flex; justify-content: space-between; gap: 20px; font-size: 18px; padding: 3px 0; }
+    #resRank { font-size: 56px; color: #ffd000; }
+    .btn { font-family: inherit; font-size: 22px; font-weight: 900; color: #fff; background: #e02030; border: 3px solid #fff;
+      box-shadow: 0 0 0 3px #1a1028, 4px 4px 0 #1a1028; padding: 8px 30px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div id="game">
+    <canvas id="c"></canvas>
+    <div id="splat"></div>
+    <div id="feed"></div>
+    <div id="pops"></div>
+  </div>
+
+  <div id="touch" class="hidden">
+    <div id="steerPad"><div class="hint">左右拖曳轉彎</div><div class="arrows"><span>◀</span><span>▶</span></div><div id="steerKnob"></div></div>
+    <div id="btns">
+      <button id="btnItem"><span>道具</span></button>
+      <button id="btnSkill"><span>技能</span></button>
+      <button id="btnBack">後退</button>
+      <button id="btnSlash">砍！</button>
+      <button id="btnDrift">甩尾</button>
+    </div>
+  </div>
+
+  <div id="select" class="screen">
+    <h1>打人三項</h1>
+    <div class="sub shadow">死亡單車 —— 選擇你的角色</div>
+    <div id="cards"></div>
+    <div class="keys">
+      <span class="kb">會自動往前騎　<b>A/D</b> 轉彎　<b>S</b> 快速後退　<b>F</b> 揮砍（可按住連砍）<br>
+      <b>空白鍵</b> 用道具（可存兩個）　<b>E</b> 角色技能　<b>Shift</b>＋轉彎 甩尾加速<br></span>
+      <span class="tc">會自動往前騎・左邊拖曳轉彎・右邊按「砍！」<br>道具可存兩個・殺人會掉寶、補血<br></span>
+      魔法、毒物、科技、天氣攻擊都在「?」箱子裡
+    </div>
+  </div>
+
+  <div id="result" class="screen hidden">
+    <div id="resRank" class="shadow"></div>
+    <div id="resBody" class="panel"></div>
+    <button class="btn" onclick="location.reload()">再跑一次</button>
+  </div>
+
+  <script type="module" src="/sample-race/main.js"></script>
+</body>
+</html>

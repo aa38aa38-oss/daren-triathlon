@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>打人三項 像素樣品</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0c0612; overflow: hidden; }
+    body { display: flex; align-items: center; justify-content: center; font-family: "Microsoft JhengHei", sans-serif; }
+    #c { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+    #title { position: fixed; left: 50%; top: 40%; transform: translate(-50%, -50%); color: #fff; font-size: 54px; font-weight: 900;
+      letter-spacing: 6px; text-shadow: 4px 4px 0 #1a1028, -2px -2px 0 #1a1028, 2px -2px 0 #1a1028, -2px 2px 0 #1a1028, 0 0 20px #f02040;
+      pointer-events: none; transition: opacity .4s; white-space: nowrap; }
+    #help { position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); color: #e8d8ff; font-size: 14px;
+      background: rgba(26,16,40,.8); border: 2px solid #f0e0ff; padding: 4px 12px; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="title">血海游泳</div>
+  <div id="help">樣品操作：WASD 移動・F 揍人・撿「?」箱子後按空白鍵放鯊魚</div>
+  <script type="module" src="/sample2d/main.js"></script>
+</body>
+</html>
