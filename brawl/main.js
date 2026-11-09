@@ -11,7 +11,7 @@ const W = PORTRAIT ? 240 : 400, H = PORTRAIT ? 320 : 225;
 const FLOOR_Y = PORTRAIT ? 148 : 104;     // 地板最遠處（z=0）在螢幕上的高度
 const ZS = PORTRAIT ? 1.45 : 1.0;         // 地板深度換算成螢幕的比例
 const AW = 600, DEPTH = 110;              // 場地寬度、深度
-const WATER_Z = 88, WAVE_Z = 50;          // 淺水區、海嘯危險區（越大越靠近螢幕下方＝靠海）
+const WATER_Z = 88, WAVE_Z = 46;          // 淺水區、海嘯危險區（越大越靠近螢幕下方＝靠海）
 document.body.classList.add(PORTRAIT ? 'portrait' : 'landscape');
 if (IS_TOUCH) document.body.classList.add('touch');
 const cv = document.getElementById('c');
@@ -42,10 +42,10 @@ const sign = (v) => (v < 0 ? -1 : 1);
 const TYPES = ['muscle', 'ninja', 'butcher', 'courier'];
 const NAME = { muscle: '肌肉阿伯', ninja: '忍者小翠', butcher: '屠夫老王', courier: '外送阿明' };
 const SKILLS = {
-  muscle: { near: ['鐵頭槌', 'headbutt'], far: ['丟啞鈴', 'dumbbell'], area: ['蠻牛衝撞', 'charge'] },
+  muscle: { near: ['鐵頭槌', 'headbutt'], far: ['丟啞鈴', 'dumbbell'], area: ['地震重踏', 'stomp'] },
   ninja: { near: ['瞬步斬', 'blink'], far: ['追蹤飛鏢', 'shuriken'], area: ['煙霧彈', 'smoke'] },
   butcher: { near: ['剁骨刀', 'cleaver'], far: ['肉鉤', 'hook'], area: ['迴旋大砍', 'spin'] },
-  courier: { near: ['外送箱砸頭', 'box'], far: ['熱湯潑灑', 'soup'], area: ['氮氣火龍', 'nitro'] },
+  courier: { near: ['外送箱砸頭', 'box'], far: ['熱湯潑灑', 'soup'], area: ['外送炸彈', 'bomb'] },
 };
 const CD = { near: 4, far: 7, area: 14 };
 const STATS = { muscle: { hp: 130, spd: 1.0 }, ninja: { hp: 95, spd: 1.2 }, butcher: { hp: 115, spd: 0.95 }, courier: { hp: 105, spd: 1.12 } };
@@ -60,13 +60,37 @@ const ITEMS = {
   magic: { name: '魔法箱', magic: true, w: 0.35 },
 };
 
-const TUNE = { aiDmgToPlayer: 1.0, aiAttack: 0.035, aiSkill: 0.007, hpMul: 6, heal: 30, spdX: 72, spdZ: 46, hitstop: 0.05 };
+const TUNE = { aiDmgToPlayer: 0.85, aiAttack: 0.035, aiSkill: 0.007, hpMul: 6, heal: 30, spdX: 72, spdZ: 46, hitstop: 0.05 };
 
 // ---------- 狀態 ----------
 let fighters = [], player = null, phase = 'select', phaseT = 0, time = 0, gameT = 0;
 let camX = 0, shake = 0, hitstop = 0, flash = 0, flashCol = '255,255,255';
 const items = [], shots = [], particles = [], chunks = [], corpses = [], fires = [], clouds = [], bolts = [], nums = [];
 let itemT = 3;
+const bombs = [], rings = [], skyS = [];
+let skyT = 9, hintN = 0, waveFade = 0;
+// 自己畫的技能圖示（美術圖沒有的）
+const EXTRA_ICON = {};
+function extraIcon(id) {
+  if (EXTRA_ICON[id]) return EXTRA_ICON[id];
+  const c = document.createElement('canvas'); c.width = c.height = 32;
+  const x = c.getContext('2d');
+  if (id === 'stomp') {
+    x.fillStyle = '#ffd000'; for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; x.fillRect(16 + Math.cos(a) * 12 - 2, 22 + Math.sin(a) * 6 - 1, 4, 2); }
+    x.fillStyle = '#1a1028'; x.fillRect(9, 5, 13, 16); x.fillStyle = '#8a5a3a'; x.fillRect(10, 6, 11, 10); x.fillStyle = '#2a2030'; x.fillRect(8, 16, 17, 6);
+  } else if (id === 'bomb') {
+    x.fillStyle = '#1a1028'; x.fillRect(5, 9, 22, 20); x.fillStyle = '#f08a20'; x.fillRect(6, 10, 20, 18); x.fillStyle = '#b05a10'; x.fillRect(6, 24, 20, 4);
+    x.fillStyle = '#ffffff'; x.fillRect(13, 15, 6, 4); x.fillStyle = '#ffd040'; x.fillRect(15, 2, 3, 7); x.fillStyle = '#ff4020'; x.fillRect(14, 0, 5, 3);
+  }
+  return (EXTRA_ICON[id] = c);
+}
+const skIcon = (id) => ART.skillIcon(id) || extraIcon(id);
+function shockwave(f, r, dmg) {
+  rings.push({ x: f.x, z: f.z, r, t: 0 });
+  for (let i = 0; i < 30; i++) particles.push({ x: f.x + rnd(-r, r) * 0.6, z: f.z + rnd(-8, 8), y: 1, vx: rnd(-60, 60), vz: rnd(-10, 10), vy: rnd(30, 90), c: i % 2 ? '#e8c890' : '#d0a868', life: 0.6 });
+  for (const o of enemiesOf(f)) if (Math.abs(o.x - f.x) < r && Math.abs(o.z - f.z) < r * 0.42 && o.y < 20) hit(f, o, dmg, { knock: true, kb: 170, up: 170, dir: sign(o.x - f.x) || 1, cause: 'boom' });
+  shake = Math.max(shake, f.isPlayer ? 5 : 2); sfx.boom(f.isPlayer ? 0.7 : 0.3);
+}
 const wave = { state: 'wait', t: 16, x: 0, dir: 1 };
 const sharks = [{ x: 120, dir: 1, cd: 2, lunge: 0 }, { x: 460, dir: -1, cd: 4, lunge: 0 }];
 const stats = { kills: {}, cause: {} };
@@ -128,7 +152,8 @@ function startGame(type) {
   }
   player = fighters[0];
   [fighters[0].x, fighters[2].x] = [fighters[2].x, fighters[0].x];
-  for (const a of [items, shots, particles, chunks, corpses, fires, clouds, bolts, nums]) a.length = 0;
+  for (const a of [items, shots, particles, chunks, corpses, fires, clouds, bolts, nums, bombs, rings, skyS, booms]) a.length = 0;
+  skyT = 9; waveFade = 0;
   paintFloor();
   Object.assign(wave, { state: 'wait', t: 16, x: 0 });
   itemT = 3; gameT = 0;
@@ -210,6 +235,8 @@ function popup(text, cls = '') {
   while (box.children.length > 2) box.firstChild.remove();
   setTimeout(() => d.remove(), 1100);
 }
+function showHint(t) { const h = $('hint'); if (h.textContent !== t) h.textContent = t; h.classList.remove('hidden'); }
+function hideHint() { $('hint').classList.add('hidden'); }
 function banner(title, sub) {
   const b = $('banner');
   b.innerHTML = `<div class="t">${title}</div><div class="s">${sub || ''}</div>`;
@@ -316,17 +343,24 @@ function spawnItem() {
   let sum = 0; for (const k of ks) sum += ITEMS[k].w;
   let r = Math.random() * sum, kind = ks[0];
   for (const k of ks) { r -= ITEMS[k].w; if (r <= 0) { kind = k; break; } }
-  items.push({ kind, uses: ITEMS[kind].uses || 1, x: rnd(30, AW - 30), z: rnd(6, WATER_Z - 12), y: 140, vy: 0 });
+  const it = { kind, uses: ITEMS[kind].uses || 1, x: rnd(30, AW - 30), z: rnd(6, WATER_Z - 12), y: 170, vy: 0, beam: 3 };
+  items.push(it);
+  if (Math.abs(it.x - (player ? player.x : 0)) < W) popup('道具掉下來了！');
 }
 function pickup(f) {
   if (f.weapon || !onGround(f) || !free(f)) return;
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
-    if (it.y > 2 || Math.abs(it.x - f.x) > 13 || Math.abs(it.z - f.z) > 8) continue;
+    if (it.y > 2 || Math.abs(it.x - f.x) > 18 || Math.abs(it.z - f.z) > 11) continue;
     items.splice(i, 1);
     if (ITEMS[it.kind].magic) { castMagic(f); return; }
     f.weapon = { kind: it.kind, uses: it.uses };
-    if (f.isPlayer) { popup(ITEMS[it.kind].name + '！'); sfx.pickup(); }
+    if (f.isPlayer) {
+      hintN++;
+      popup(ITEMS[it.kind].throw ? `撿到${ITEMS[it.kind].name}！按攻擊丟出去` : `撿到${ITEMS[it.kind].name}！攻擊鍵改用它打`, 'skill');
+      sfx.pickup();
+      for (let k = 0; k < 16; k++) particles.push({ x: f.x, z: f.z, y: 20, vx: rnd(-50, 50), vz: rnd(-10, 10), vy: rnd(40, 110), c: k % 2 ? '#ffe000' : '#ffffff', life: 0.5 });
+    }
     return;
   }
 }
@@ -406,7 +440,7 @@ function castSkill(f, slot) {
       shots.push({ kind: 'dumbbell', x: f.x, z: f.z, y: 24, sx: f.x, sz: f.z, tx, tz, p: 0, dur: 0.6, owner: f, life: 1, dmg: 22 * m });
       break;
     }
-    case 'muscle.area': setState(f, 'dash'); f.dash = { t: 0.75, spd: 260, dmg: 26 * m, opt: { knock: true, kb: 200, cause: 'boom' } }; f.dashLean = 0.85; shake = P ? 3 : shake; break;
+    case 'muscle.area': setState(f, 'stomp'); f.vy = 130; f.stompDone = false; f.stompDmg = 28 * m; break; // 跳起來往地上一踩，震飛身邊的人
     case 'ninja.near': {
       const o = nearest(f, 170);
       if (o) {
@@ -440,7 +474,7 @@ function castSkill(f, slot) {
       for (let i = 0; i < 45; i++) particles.push({ x: f.x + f.face * 8, z: f.z, y: 20, vx: f.face * rnd(80, 220), vz: rnd(-30, 30), vy: rnd(10, 70), c: i % 2 ? '#ff8a20' : '#ffd040', life: 0.5 });
       break;
     }
-    case 'courier.area': setState(f, 'dash'); f.dash = { t: 0.9, spd: 280, dmg: 18 * m, opt: { knock: true, kb: 160, cause: 'boom' }, fire: true }; f.dashLean = 0.6; break;
+    case 'courier.area': setState(f, 'cast'); bombs.push({ x: f.x, z: f.z, t: 0.45, owner: f, dmg: 26 * m }); break; // 外送箱在腳邊爆炸
   }
 }
 
@@ -482,6 +516,7 @@ function aiControl(f, dt) {
   if (ai.goal) { gx = ai.goal.x; gz = ai.goal.z; }
   else if (t) { const side = sign(f.x - t.x); gx = t.x + side * (f.weapon && ITEMS[f.weapon.kind].melee ? 26 : 17); gz = t.z; }
   if (danger && f.z > WAVE_Z - 12) { gz = WAVE_Z * 0.35; gx = f.x; }
+  for (const sk of skyS) if (sk.state !== 'flop' && Math.abs(sk.x - f.x) < 34 && Math.abs(sk.z - f.z) < 16 && Math.random() < 0.9) { gx = f.x + sign(f.x - sk.x) * 50; }
   if (gz > WATER_Z - 4 && !danger) gz = WATER_Z - 6;
   const dx = gx - f.x, dz = gz - f.z;
   c.mx = Math.abs(dx) > 4 ? clamp(dx / 20, -1, 1) : 0;
@@ -514,6 +549,7 @@ function autoControl() {
   if (t) { gx = t.x + sign(f.x - t.x) * 16; gz = t.z; }
   if (!f.weapon) { const it = items.find((i) => i.y < 2 && Math.abs(i.x - f.x) < 90); if (it) { gx = it.x; gz = it.z; } }
   if (danger && f.z > WAVE_Z - 12) { gz = 10; gx = f.x; }
+  for (const sk of skyS) if (sk.state !== 'flop' && Math.abs(sk.x - f.x) < 34 && Math.abs(sk.z - f.z) < 16) gx = f.x + sign(f.x - sk.x) * 50;
   c.mx = Math.abs(gx - f.x) > 4 ? clamp((gx - f.x) / 20, -1, 1) : 0;
   c.my = Math.abs(gz - f.z) > 2 ? clamp((gz - f.z) / 10, -1, 1) : 0;
   const casual = autoPilot === 'casual';
@@ -622,6 +658,10 @@ function stepFighter(f, c, dt) {
       }
     }
     if (t >= 0.5) { f.spinFace = 0; setState(f, 'idle'); }
+  } else if (s === 'stomp') {
+    f.vx = 0; f.vz = 0;
+    if (!f.stompDone && t > 0.12 && onGround(f)) { f.stompDone = true; shockwave(f, 44, f.stompDmg); }
+    if (t >= 0.6) setState(f, 'idle');
   } else if (s === 'cast') {
     f.vx = 0; f.vz = 0;
     if (t >= 0.3) setState(f, 'idle');
@@ -666,13 +706,14 @@ function updateHazards(dt) {
   wave.t -= dt;
   if (wave.state === 'wait' && wave.t <= 0) {
     wave.state = 'warn'; wave.t = 3; wave.dir = Math.random() < 0.5 ? 1 : -1;
-    popup('海嘯要來了！快往沙灘上跑！', 'bad'); sfx.rumble();
+    popup('海嘯要來了！快離開紅色區域！', 'bad'); sfx.rumble();
   } else if (wave.state === 'warn' && wave.t <= 0) {
     wave.state = 'go'; wave.x = wave.dir > 0 ? -140 : AW + 140;
     for (const f of fighters) f.waveHit = false;
     shake = Math.max(shake, 4); sfx.boom(0.8);
   } else if (wave.state === 'go') {
-    wave.x += wave.dir * 380 * dt;
+    wave.x += wave.dir * 360 * dt;
+    for (let k = 0; k < 6; k++) particles.push({ x: wave.x + rnd(-10, 10), z: rnd(WAVE_Z, DEPTH), y: rnd(10, 60), vx: wave.dir * rnd(60, 200), vz: 0, vy: rnd(40, 120), c: k % 2 ? '#ffffff' : '#ff4060', life: 0.5 });
     for (const f of fighters) {
       if (!f.alive || f.waveHit || f.z < WAVE_Z || Math.abs(wave.x - f.x) > 30) continue;
       f.waveHit = true;
@@ -681,7 +722,7 @@ function updateHazards(dt) {
       hit(null, f, f.maxHp * 0.4, { knock: true, kb: 280, up: 200, dir: wave.dir, cause: 'wave' }); // 被海嘯打到扣 4 成血
     }
     for (let i = items.length - 1; i >= 0; i--) if (items[i].z > WAVE_Z && Math.abs(items[i].x - wave.x) < 30) items.splice(i, 1);
-    if ((wave.dir > 0 && wave.x > AW + 160) || (wave.dir < 0 && wave.x < -160)) { wave.state = 'wait'; wave.t = rnd(20, 26); }
+    if ((wave.dir > 0 && wave.x > AW + 160) || (wave.dir < 0 && wave.x < -160)) { wave.state = 'wait'; wave.t = rnd(20, 26); waveFade = 1; }
   }
   // 鯊魚：在淺水區巡邏，看到有人在水裡就衝過去咬
   for (const sk of sharks) {
@@ -691,8 +732,8 @@ function updateHazards(dt) {
       const t = sk.target;
       if (t && t.alive) {
         sk.x += sign(t.x - sk.x) * 240 * dt;
-        if (Math.abs(t.x - sk.x) < 12 && t.z > WATER_Z - 2) {
-          sk.lunge = 0; sk.cd = 3.5; sk.bite = 0.4;
+        if (Math.abs(t.x - sk.x) < 14 && t.z > WATER_Z - 6) {
+          sk.lunge = 0; sk.cd = 2.5; sk.bite = 0.4;
           blood(t.x, t.z, 6, 80, 90, 120);
           splat(t.x, t.z, 5);
           hit(null, t, t.maxHp * 0.15, { bleed: 4, kb: 40, dir: sign(t.x - sk.x), cause: 'shark' });
@@ -703,11 +744,48 @@ function updateHazards(dt) {
       sk.x += sk.dir * 45 * dt;
       if (sk.x < 20 || sk.x > AW - 20) sk.dir = -sk.dir;
       if (sk.cd <= 0) {
-        const t = fighters.find((f) => f.alive && f.z > WATER_Z && Math.abs(f.x - sk.x) < 90);
+        const t = fighters.find((f) => f.alive && f.z > WATER_Z - 4 && Math.abs(f.x - sk.x) < 130);
         if (t) { sk.target = t; sk.lunge = 0.7; sk.dir = sign(t.x - sk.x); }
       }
     }
     sk.bite = (sk.bite || 0) - dt;
+  }
+  // 天上掉鯊魚：先在目標腳下出現紅圈，然後砸下來，落地後在沙灘上亂咬一陣子
+  skyT -= dt;
+  if (skyT <= 0) {
+    skyT = rnd(10, 14);
+    const al2 = alive();
+    const tg = player && player.alive && Math.random() < 0.25 ? player : al2[Math.floor(Math.random() * al2.length)];
+    if (tg) {
+      skyS.push({ x: clamp(tg.x + tg.vx * 0.5, 15, AW - 15), z: clamp(tg.z, 4, DEPTH - 4), y: 260, state: 'mark', t: 1.5, vy: 0, bite: 0, dir: Math.random() < 0.5 ? 1 : -1 });
+      if (tg.isPlayer) popup('鯊魚瞄準你了！快閃開！', 'bad');
+    }
+  }
+  for (let i = skyS.length - 1; i >= 0; i--) {
+    const sk = skyS[i];
+    sk.t -= dt;
+    if (sk.state === 'mark' && sk.t <= 0) { sk.state = 'fall'; sk.vy = -300; }
+    else if (sk.state === 'fall') {
+      sk.vy -= 600 * dt; sk.y += sk.vy * dt;
+      if (sk.y <= 0) {
+        sk.y = 0; sk.state = 'flop'; sk.t = 3;
+        shake = Math.max(shake, 4); sfx.bite(1); sfx.boom(0.4);
+        blood(sk.x, sk.z, 4, 30, 80, 90, '#e8c890');
+        for (const f of fighters) if (f.alive && Math.abs(f.x - sk.x) < 24 && Math.abs(f.z - sk.z) < 13) {
+          blood(f.x, f.z, 16, 80, 100, 130); splat(f.x, f.z, 6);
+          hit(null, f, f.maxHp * 0.18, { knock: true, kb: 150, up: 160, bleed: 4, dir: sign(f.x - sk.x), cause: 'shark' });
+        }
+      }
+    } else if (sk.state === 'flop') {
+      sk.bite -= dt;
+      if (sk.bite <= 0) {
+        sk.bite = 1.2;
+        const f = fighters.find((o) => o.alive && Math.abs(o.x - sk.x) < 20 && Math.abs(o.z - sk.z) < 10);
+        if (f) { sk.dir = sign(f.x - sk.x); sk.chomp = 0.25; blood(f.x, f.z, 14, 40, 70, 90); hit(null, f, f.maxHp * 0.05, { bleed: 2, kb: 60, dir: sk.dir, cause: 'shark' }); sfx.bite(0.6); }
+      }
+      sk.chomp = (sk.chomp || 0) - dt;
+      if (sk.t <= 0) { blood(sk.x, sk.z, 6, 60, 70, 90); splat(sk.x, sk.z, 5); skyS.splice(i, 1); }
+    }
   }
   // 地上的火（外送阿明的氮氣火龍）
   for (let i = fires.length - 1; i >= 0; i--) {
@@ -725,6 +803,22 @@ function updateHazards(dt) {
   }
 }
 
+function updateBombs(dt) {
+  for (let i = bombs.length - 1; i >= 0; i--) {
+    const b = bombs[i];
+    b.t -= dt;
+    if (b.t > 0) continue;
+    bombs.splice(i, 1);
+    booms.push({ x: b.x, z: b.z, t: 0 });
+    for (let k = 0; k < 40; k++) particles.push({ x: b.x, z: b.z, y: 6, vx: rnd(-120, 120), vz: rnd(-25, 25), vy: rnd(40, 160), c: k % 3 ? '#ff8a20' : '#ffd040', life: 0.6 });
+    for (const o of enemiesOf(b.owner)) if (Math.abs(o.x - b.x) < 42 && Math.abs(o.z - b.z) < 18) hit(b.owner, o, b.dmg, { knock: true, kb: 180, up: 170, burn: 3, dir: sign(o.x - b.x) || 1, cause: 'boom' });
+    shake = Math.max(shake, b.owner.isPlayer ? 5 : 2); sfx.boom(b.owner.isPlayer ? 0.8 : 0.4);
+    splat(b.x, b.z, 7);
+  }
+  for (let i = rings.length - 1; i >= 0; i--) { rings[i].t += dt; if (rings[i].t > 0.4) rings.splice(i, 1); }
+  for (let i = booms.length - 1; i >= 0; i--) { booms[i].t += dt; if (booms[i].t > 0.5) booms.splice(i, 1); }
+}
+const booms = [];
 function updateShots(dt) {
   for (let i = shots.length - 1; i >= 0; i--) {
     const s = shots[i];
@@ -792,7 +886,17 @@ function update(dt) {
     if (d < 10 && d > 0.01) { const p = (10 - d) / 2; a.x -= (dx / d) * p; b.x += (dx / d) * p; a.z -= (dz / d) * p * 0.25; b.z += (dz / d) * p * 0.25; }
   }
   updateShots(dt);
-  for (const it of items) if (it.y > 0 || it.vy > 0) { it.vy -= 400 * dt; it.y += it.vy * dt; if (it.y <= 0) { it.y = 0; it.vy = 0; } }
+  updateBombs(dt);
+  for (const it of items) {
+    if (it.beam > 0) it.beam -= dt;
+    if (it.y > 0 || it.vy > 0) {
+      it.vy -= 400 * dt; it.y += it.vy * dt;
+      if (it.y <= 0) { it.y = 0; it.vy = 0; for (let k = 0; k < 12; k++) particles.push({ x: it.x, z: it.z, y: 1, vx: rnd(-50, 50), vz: rnd(-8, 8), vy: rnd(20, 60), c: '#e8c890', life: 0.5 }); }
+    }
+  }
+  // 提示：附近有道具、手上空空時告訴玩家怎麼撿
+  if (player && player.alive && !player.weapon && hintN < 2 && items.some((i) => i.y < 2 && Math.abs(i.x - player.x) < 70 && Math.abs(i.z - player.z) < 40)) showHint('走到發光的道具上就會自動撿起來');
+  else hideHint();
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
     p.life -= dt;
@@ -821,6 +925,7 @@ function update(dt) {
   const want = clamp(v.x - W / 2 + v.face * 18, 0, AW - W);
   camX += (want - camX) * Math.min(1, 6 * dt);
   shake = Math.max(0, shake - dt * 14);
+  waveFade = Math.max(0, waveFade - dt);
   flash -= dt;
   splatA = Math.max(0, splatA - dt * 0.6);
   $('splat').style.opacity = splatA;
@@ -880,7 +985,34 @@ function drawFloor() {
     g.fillStyle = '#ffffff'; g.fillRect(x, wy + o, 2, 1);
     g.fillStyle = '#bfeaff'; g.fillRect(x, wy + o + 1, 2, 1);
   }
-  if (wave.state === 'warn' && Math.floor(time * 6) % 2) { g.fillStyle = 'rgba(255,0,30,0.28)'; g.fillRect(0, SY(WAVE_Z), W, SY(DEPTH) - SY(WAVE_Z) + 4); }
+  if (wave.state === 'warn') drawWaveWarning();
+  if (wave.state === 'go' || waveFade > 0) {
+    // 海嘯經過的地方被海水淹過
+    const a = wave.state === 'go' ? 0.4 : waveFade * 0.4;
+    g.fillStyle = `rgba(40,110,220,${a})`;
+    const y0 = SY(WAVE_Z), x0 = wave.state === 'go' ? (wave.dir > 0 ? 0 : SX(wave.x)) : 0, x1 = wave.state === 'go' ? (wave.dir > 0 ? SX(wave.x) : W) : W;
+    g.fillRect(Math.max(0, x0), y0, Math.max(0, Math.min(W, x1) - Math.max(0, x0)), SY(DEPTH) - y0 + 4);
+  }
+}
+// 海嘯警告：危險區畫紅色斜紋、邊界線，海水慢慢漲到會淹到的位置，來的方向閃大箭頭
+function drawWaveWarning() {
+  const k = 1 - wave.t / 3, y0 = SY(WAVE_Z), y1 = SY(DEPTH) + 4;
+  g.fillStyle = 'rgba(255,0,30,0.22)'; g.fillRect(0, y0, W, y1 - y0);
+  g.fillStyle = 'rgba(255,40,60,0.35)';
+  const off = Math.floor(time * 30) % 12;
+  for (let y = y0; y < y1; y++) for (let x = -12 + ((y - y0 + off) % 12); x < W; x += 12) g.fillRect(x, y, 5, 1);
+  const wy = SY(WATER_Z), ry = Math.round(wy + (y0 - wy) * k);
+  g.fillStyle = 'rgba(60,140,240,0.55)'; g.fillRect(0, ry, W, wy - ry);
+  for (let x = 0; x < W; x += 2) { g.fillStyle = '#ffffff'; g.fillRect(x, ry + Math.round(Math.sin(x * 0.2 + time * 8)), 2, 1); }
+  for (let x = 0; x < W; x += 8) { g.fillStyle = Math.floor(time * 8 + x / 8) % 2 ? '#ff2040' : '#ffffff'; g.fillRect(x, y0 - 1, 5, 2); }
+  if (Math.floor(time * 5) % 2) {
+    const left = wave.dir > 0, ay = Math.round((y0 + y1) / 2);
+    g.fillStyle = '#ff2040';
+    for (let i = 0; i < 12; i++) g.fillRect(left ? 2 + i : W - 3 - i, ay - 12 + i, 1, 24 - i * 2);
+  }
+  const n = String(Math.ceil(wave.t));
+  drawText(g, 'TSUNAMI', W / 2 - textW('TSUNAMI', 2) / 2, y0 + 6, 2, '#ffffff');
+  drawText(g, n, W / 2 - textW(n, 4) / 2, y0 + 20, 4, '#ff2040');
 }
 function drawShadow(x, z, w) {
   g.fillStyle = 'rgba(40,20,10,0.35)';
@@ -899,6 +1031,8 @@ function render() {
   for (const s of shots) list.push({ z: s.z, d: () => drawShot(s) });
   for (const c of chunks) list.push({ z: c.z, d: () => { drawShadow(c.x, c.z, 3); g.save(); g.translate(SX(c.x), SY(c.z, c.y + 5)); g.rotate(c.rot); drawHead(g, c.f, [0, 0], c.f.face); dot(g, 0, 5, 2.4, '#c01028'); g.restore(); } });
   for (const sk of sharks) list.push({ z: DEPTH - 6, d: () => drawShark(sk) });
+  for (const sk of skyS) list.push({ z: sk.z, d: () => drawSkyShark(sk) });
+  for (const b of bombs) list.push({ z: b.z, d: () => { const sx = SX(b.x), sy = SY(b.z); g.fillStyle = OUT; g.fillRect(sx - 6, sy - 11, 12, 11); g.fillStyle = '#f08a20'; g.fillRect(sx - 5, sy - 10, 10, 9); g.fillStyle = Math.floor(time * 16) % 2 ? '#ff2020' : '#ffffff'; g.fillRect(sx - 1, sy - 15, 2, 4); } });
   list.sort((a, b) => a.z - b.z);
   for (const e of list) e.d();
   for (const fr of fires) { g.fillStyle = Math.floor(time * 12 + fr.x) % 2 ? '#ff6a14' : '#ffd040'; g.fillRect(SX(fr.x) - 2, SY(fr.z) - 4, 4, 4); }
@@ -918,6 +1052,16 @@ function render() {
     }
   }
   if (wave.state === 'go') drawWave();
+  for (const rg of rings) {
+    const k = rg.t / 0.4, rr = rg.r * (0.3 + k);
+    g.globalAlpha = 1 - k; g.fillStyle = '#ffffff';
+    for (let a = 0; a < Math.PI * 2; a += 0.12) g.fillRect(SX(rg.x + Math.cos(a) * rr), SY(rg.z + Math.sin(a) * rr * 0.42), 2, 2);
+    g.globalAlpha = 1;
+  }
+  for (const b of booms) {
+    const im = ART.A.fx_boom, k = b.t / 0.5;
+    if (im) { const h = 60 * (0.5 + k); const w = (im.width * h) / im.height; g.globalAlpha = 1 - k * k; g.imageSmoothingEnabled = true; g.drawImage(im, SX(b.x) - w / 2, SY(b.z) - h * 0.75, w, h); g.imageSmoothingEnabled = false; g.globalAlpha = 1; }
+  }
   for (const n of nums) drawText(g, String(n.v), SX(n.x) - textW(String(n.v), 1) / 2, SY(n.z, n.y + n.t * 20), 1, n.c);
   drawHud();
   if (flash > 0) { g.fillStyle = `rgba(${flashCol},0.5)`; g.fillRect(0, 0, W, H); }
@@ -942,11 +1086,28 @@ function drawOne(f) {
   if (f.isPlayer) { g.fillStyle = '#ffe000'; const yy = sy - 53 + Math.round(Math.sin(time * 6)); g.fillRect(sx - 2, yy, 5, 2); g.fillRect(sx - 1, yy + 2, 3, 1); g.fillRect(sx, yy + 3, 1, 1); }
 }
 function drawItem(it) {
+  const gx = SX(it.x), gy = SY(it.z);
+  // 從天上掉下來時有一道光柱
+  if (it.beam > 0) {
+    g.globalAlpha = Math.min(1, it.beam) * 0.35;
+    g.fillStyle = '#fff6a0'; g.fillRect(gx - 5, 0, 10, gy);
+    g.fillStyle = '#ffffff'; g.fillRect(gx - 2, 0, 4, gy);
+    g.globalAlpha = 1;
+  }
+  // 地上一圈會閃的光
+  const pulse = 0.5 + Math.sin(time * 6 + it.x) * 0.5;
+  g.globalAlpha = 0.45 + pulse * 0.4;
+  g.fillStyle = it.kind === 'magic' ? '#c080ff' : '#ffe000';
+  for (let a = 0; a < Math.PI * 2; a += 0.35) g.fillRect(Math.round(gx + Math.cos(a + time * 2) * (11 + pulse * 2)), Math.round(gy + Math.sin(a + time * 2) * (4 + pulse)), 2, 1);
+  g.globalAlpha = 1;
   drawShadow(it.x, it.z, 5);
-  const sx = SX(it.x), sy = SY(it.z, it.y + 4 + Math.sin(time * 4 + it.x) * 1.5);
-  if (it.kind === 'magic') { const im = ART.A.icon_qbox; if (im) { g.imageSmoothingEnabled = true; g.drawImage(im, sx - 7, sy - 10, 14, 14); g.imageSmoothingEnabled = false; } return; }
-  drawWeapon(g, it.kind, [sx - 6, sy], 1.3, 1);
-  if (Math.floor(time * 3) % 2) { g.fillStyle = '#ffffff'; g.fillRect(sx - 1, sy - 9, 2, 2); }
+  const sx = gx, sy = SY(it.z, it.y + 6 + Math.sin(time * 4 + it.x) * 2);
+  g.save(); g.translate(sx, sy); g.scale(1.6, 1.6);
+  if (it.kind === 'magic') { const im = ART.A.icon_qbox; if (im) { g.imageSmoothingEnabled = true; g.drawImage(im, -7, -10, 14, 14); g.imageSmoothingEnabled = false; } }
+  else drawWeapon(g, it.kind, [-6, 0], 1.3, 1);
+  g.restore();
+  // 上面一個跳動的箭頭
+  if (it.y < 2) { g.fillStyle = '#ffe000'; const ay = sy - 26 + Math.round(Math.sin(time * 6) * 2); for (let i = 0; i < 4; i++) g.fillRect(sx - 3 + i, ay + i, 7 - i * 2, 1); }
 }
 function drawShot(s) {
   const sx = SX(s.x), sy = SY(s.z, s.y);
@@ -977,9 +1138,39 @@ function drawShark(sk) {
   if (d || sk.bite > 0) { g.fillStyle = '#ffffff'; g.fillRect(sx - 10 + Math.random() * 4, sy - 2, 3, 1); }
   if (sk.bite > 0) { dot(g, sx, sy - 4, 5, '#8a0016'); g.fillStyle = '#ffffff'; g.fillRect(sx - 4, sy - 6, 2, 2); g.fillRect(sx + 2, sy - 6, 2, 2); }
 }
+// 鯊魚（側面）：rot 旋轉角度、open 嘴巴張開
+function sharkBody(x, y, dir, rot, open) {
+  g.save(); g.translate(x, y); g.rotate(rot); g.scale(dir, 1);
+  seg(g, -12, 0, 10, 0, 10, OUT); seg(g, -12, 0, 10, 0, 8, '#6a7a8e');
+  seg(g, -10, 2, 8, 2, 4, '#e8eef4');
+  for (let i = 0; i < 6; i++) g.fillRect(-2 + i * 0.5, -9 + i, 6 - i, 1);
+  g.fillStyle = '#6a7a8e'; for (let i = 0; i < 5; i++) g.fillRect(-1 + i * 0.5, -8 + i, 4 - i, 1);
+  seg(g, -12, 0, -18, -6, 3, '#6a7a8e'); seg(g, -12, 0, -18, 5, 3, '#6a7a8e');
+  g.fillStyle = '#000'; g.fillRect(6, -2, 1, 1);
+  if (open) { g.fillStyle = '#8a0016'; g.fillRect(8, 0, 6, 4); g.fillStyle = '#fff'; g.fillRect(8, 0, 1, 1); g.fillRect(10, 0, 1, 1); g.fillRect(12, 0, 1, 1); g.fillRect(9, 3, 1, 1); g.fillRect(11, 3, 1, 1); }
+  g.restore();
+}
+function drawSkyShark(sk) {
+  const gx = SX(sk.x), gy = SY(sk.z);
+  if (sk.state === 'mark' || sk.state === 'fall') {
+    // 地上的紅色瞄準圈越縮越小
+    const k = sk.state === 'mark' ? 1 - sk.t / 1.5 : 1;
+    g.fillStyle = Math.floor(time * 10) % 2 ? '#ff2040' : '#ffffff';
+    const rr = 26 - k * 8;
+    for (let a = 0; a < Math.PI * 2; a += 0.2) g.fillRect(Math.round(gx + Math.cos(a) * rr), Math.round(gy + Math.sin(a) * rr * 0.45), 2, 1);
+    g.fillStyle = 'rgba(255,0,40,0.25)'; g.fillRect(gx - rr, gy - 4, rr * 2, 8);
+    drawText(g, '!', gx - 1, gy - 18 - Math.round(Math.sin(time * 10) * 2), 2, '#ff2040');
+  }
+  if (sk.state === 'fall') { drawShadow(sk.x, sk.z, 10); sharkBody(gx, SY(sk.z, sk.y + 10), sk.dir, Math.PI / 2 * sk.dir, true); }
+  if (sk.state === 'flop') {
+    drawShadow(sk.x, sk.z, 12);
+    const wob = Math.sin(time * 14 + sk.x) * 0.25;
+    sharkBody(gx, gy - 6 - Math.abs(Math.sin(time * 7)) * 3, sk.dir, wob, sk.chomp > 0 || Math.floor(time * 4) % 2 === 0);
+  }
+}
 function drawWave() {
   const im = ART.A[`wall_tsunami${Math.floor(time * 6) % 2}`];
-  const top = SY(WAVE_Z) - 50, bot = SY(DEPTH) + 6;
+  const top = SY(WAVE_Z) - 75, bot = SY(DEPTH) + 8;
   const h = bot - top;
   const sx = SX(wave.x);
   if (im) {
@@ -1021,7 +1212,7 @@ function drawHud() {
     ['near', 'far', 'area'].forEach((slot, k) => {
       const x = W - 84 + k * 27, y = H - 28;
       g.fillStyle = OUT; g.fillRect(x - 1, y - 1, 26, 26); g.fillStyle = '#2a1840'; g.fillRect(x, y, 24, 24);
-      const ic = ART.skillIcon(SKILLS[player.type][slot][1]);
+      const ic = skIcon(SKILLS[player.type][slot][1]);
       const cd = Math.max(0, player.cd[slot]);
       if (ic) { g.imageSmoothingEnabled = true; g.globalAlpha = cd > 0 ? 0.35 : 1; g.drawImage(ic, x + 2, y + 2, 20, 20); g.globalAlpha = 1; g.imageSmoothingEnabled = false; }
       if (cd > 0) drawText(g, String(Math.ceil(cd)), x + 12 - textW(String(Math.ceil(cd)), 2) / 2, y + 7, 2, '#ffffff');
@@ -1033,11 +1224,19 @@ function drawHud() {
 
 // 手機按鈕：技能圖示與冷卻秒數
 const lastBtn = {};
+const WICON = {};
+function weaponIcon(kind) {
+  if (WICON[kind]) return WICON[kind];
+  const c = document.createElement('canvas'); c.width = c.height = 40;
+  const x = c.getContext('2d'); x.translate(20, 22); x.scale(2, 2);
+  drawWeapon(x, kind, [-6, 0], 1.3, 1);
+  return (WICON[kind] = c.toDataURL());
+}
 function setupButtons() {
   for (const [slot, id] of [['near', 'bNear'], ['far', 'bFar'], ['area', 'bArea']]) {
     const [nm, ic] = SKILLS[player.type][slot];
     const b = $(id);
-    const im = ART.skillIcon(ic);
+    const im = skIcon(ic);
     if (im) b.style.backgroundImage = `url(${im.toDataURL()})`;
     b.querySelector('span').textContent = nm;
   }
@@ -1054,6 +1253,17 @@ function updateButtons() {
   }
   const rc = player.rollCd > 0;
   if (lastBtn.roll !== rc) { lastBtn.roll = rc; $('bDodge').classList.toggle('cool', rc); }
+  const wk = player.weapon ? player.weapon.kind + player.weapon.uses : '';
+  if (lastBtn.wk !== wk) {
+    lastBtn.wk = wk;
+    const b = $('bAtk');
+    if (player.weapon) {
+      const it = ITEMS[player.weapon.kind];
+      b.innerHTML = `<span style="font-size:13px">${it.throw ? '丟' + it.name : it.name + '×' + player.weapon.uses}</span>`;
+      b.style.backgroundImage = `url(${weaponIcon(player.weapon.kind)})`;
+      b.classList.add('armed');
+    } else { b.textContent = '攻擊！'; b.style.backgroundImage = ''; b.classList.remove('armed'); }
+  }
 }
 
 let last = performance.now();
@@ -1098,7 +1308,7 @@ ART.ready.then(() => {
 // ---------- 除錯與自動試玩 ----------
 window.dbg = {
   TUNE, stats, keys, touch,
-  get player() { return player; }, get fighters() { return fighters; }, get phase() { return phase; }, get wave() { return wave; }, get items() { return items; },
+  get player() { return player; }, get fighters() { return fighters; }, get skyS() { return skyS; }, setSkyT(v) { skyT = v; }, get phase() { return phase; }, get wave() { return wave; }, get items() { return items; },
   autopilot(casual = false) { autoPilot = casual ? 'casual' : 'pro'; }, manual() { autoPilot = false; },
   start(i) { ended = false; $('result').classList.add('hidden'); startGame(TYPES[i]); },
   advance(sec) { for (let i = 0; i < sec * 60; i++) update(1 / 60); render(); },

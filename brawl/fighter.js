@@ -82,6 +82,9 @@ export function poseFor(f, time) {
     case 'throw': { const k = ease(t / 0.14); return P({ fu: -2.6 + k * 3.8, ff: 0.2, bu: 0.6, bf: 1.0, lean: -0.2 + k * 0.35, ft: 0.4, bt: -0.4 }); }
     case 'chop': case 'wswing': { const k = ease((t - 0.05) / 0.1); return P({ fu: -2.7 + k * 3.9, ff: 0.15, bu: 0.5, bf: 1.0, lean: -0.15 + k * 0.4, ft: 0.45, bt: -0.45 }); }
     case 'thrust': { const k = ease(t / 0.08); return P({ fu: 0.6 + k * 1.0, ff: 0.9 - k * 0.9, bu: 0.8 + k * 0.6, bf: 0.8 - k * 0.6, lean: 0.25 * k, ft: 0.4, bt: -0.4 }); }
+    case 'stomp': return f.y > 1
+      ? P({ ft: 1.0, fs: 1.6, bt: 0.5, bs: 1.4, fu: -2.4, ff: 0.2, bu: -2.2, bf: 0.2 })
+      : P({ ft: 0.7, fs: 1.3, bt: -0.6, bs: 1.1, fu: 0.4, ff: 0.2, bu: 0.3, bf: 0.2, bob: 3, lean: 0.3 });
     case 'cast': return P({ fu: 1.5, ff: 0.2, bu: 1.2, bf: 0.4, lean: 0.15, ft: 0.4, bt: -0.4 });
     case 'frozen': return P({ fu: 0.75, ff: 1.5, bu: 0.45, bf: 1.35, ft: 0.25, bt: -0.25 });
     case 'corpse': return P({ rot: LIE(f), fu: -2.8, ff: 0.6, bu: -2.0, bf: 0.9, ft: 0.4, fs: 0.8, bt: -0.3, bs: 0.3 });
