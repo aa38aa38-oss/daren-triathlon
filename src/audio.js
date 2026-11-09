@@ -4,6 +4,8 @@ const last = {};
 
 export function initAudio() {
   if (ac) return;
+  // 網址加上 ?mute 就完全不發出聲音（測試用）
+  if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('mute')) return;
   try {
     ac = new (window.AudioContext || window.webkitAudioContext)();
     master = ac.createGain();

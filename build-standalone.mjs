@@ -1,4 +1,4 @@
-// 把賽車樣品打包成「一個 HTML 檔」，不需要伺服器，直接雙擊就能玩
+// 把大逃殺版打包成「一個 HTML 檔」，不需要伺服器，直接雙擊就能玩
 import { build } from 'vite';
 import { readFileSync, writeFileSync, readdirSync, rmSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -9,10 +9,10 @@ await build({
   root, base: './', logLevel: 'warn',
   build: {
     outDir: out, emptyOutDir: true, modulePreload: false,
-    rollupOptions: { input: join(root, 'sample-race.html') },
+    rollupOptions: { input: join(root, 'br.html') },
   },
 });
-let html = readFileSync(join(out, 'sample-race.html'), 'utf8');
+let html = readFileSync(join(out, 'br.html'), 'utf8');
 const assets = join(out, 'assets');
 for (const f of readdirSync(assets)) {
   const code = readFileSync(join(assets, f), 'utf8');
@@ -23,7 +23,7 @@ for (const f of readdirSync(assets)) {
   }
 }
 if (/src="\.\/assets|href="\.\/assets/.test(html)) throw new Error('還有沒內嵌的檔案');
-writeFileSync(join(root, '試玩-賽車樣品.html'), html);
+writeFileSync(join(root, '試玩-打人三項.html'), html);
 // GitHub Pages 用：docs/index.html
 mkdirSync(join(root, 'docs'), { recursive: true });
 writeFileSync(join(root, 'docs', 'index.html'), html);
