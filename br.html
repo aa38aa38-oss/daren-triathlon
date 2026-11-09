@@ -7,7 +7,11 @@
   <meta name="theme-color" content="#0c0612" />
   <title>打人三項</title>
   <style>
-    html, body { margin: 0; width: 100vw; height: 100vh; background: #0c0612; overflow: hidden; overscroll-behavior: none; }
+    /* 整個頁面固定住：不能捲動、不能縮放（手指壓到畫面也不會讓網頁跑掉） */
+    html, body { margin: 0; width: 100vw; height: 100vh; background: #0c0612; overflow: hidden; overscroll-behavior: none; touch-action: none; }
+    body { position: fixed; inset: 0; }
+    * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+    canvas, #game, #touch, #touch * { touch-action: none; }
     body { font-family: "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif; color: #fff; user-select: none; -webkit-user-select: none;
       touch-action: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
     body.landscape { display: flex; align-items: center; justify-content: center; }
@@ -63,6 +67,7 @@
 
     .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
       background: rgba(20,8,30,.6); padding: 12px; overflow-y: auto; box-sizing: border-box; touch-action: pan-y; }
+    #logo { width: min(92vw, 460px); image-rendering: auto; margin-bottom: 2px; filter: drop-shadow(0 0 18px rgba(255,0,0,.5)); }
     h1 { margin: 0 0 4px; font-size: clamp(36px, 10vw, 52px); color: #ff2a3a; letter-spacing: 6px; text-shadow: 4px 4px 0 #1a1028, 0 0 24px #f00; }
     .sub { margin-bottom: 14px; font-size: 16px; color: #ffd0d8; text-align: center; }
     #cards { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
@@ -70,7 +75,7 @@
       color: #fff; font-family: inherit; padding: 10px; cursor: pointer; text-align: left; }
     .card:hover { background: #4a2a70; }
     .card .num { position: absolute; right: 8px; top: 6px; color: #ffd000; font-weight: 900; font-size: 20px; }
-    .portrait { width: 100px; height: 100px; image-rendering: pixelated; display: block; margin: 0 auto 6px; background: #3a2458; }
+    .portrait { width: 100px; height: 100px; object-fit: contain; display: block; margin: 0 auto 6px; background: #3a2458; }
     .card .nm { font-size: 20px; font-weight: 900; text-align: center; }
     .card .sk { color: #ffe8a0; margin: 6px 0 2px; font-size: 12px; line-height: 1.6; }
     .card .sk b { color: #1a1028; background: #ffd000; padding: 0 3px; margin-right: 2px; font-size: 11px; }
@@ -114,11 +119,11 @@
   </div>
 
   <div id="select" class="screen">
-    <h1>打人三項</h1>
+    <img id="logo" class="hidden" alt="打人三項" /><h1 id="title">打人三項</h1>
     <div class="sub shadow">大逃殺：被死亡之牆追著打，殺到只剩你一個</div>
     <div id="cards"></div>
     <div class="keys">
-      <span class="kb"><b>WASD</b> 移動（前後是相對殺戮帶）　<b>J</b> 揮砍（按住連砍）　<b>K</b> 近距離　<b>L</b> 遠距離　<b>I</b> 範圍<br>
+      <span class="kb"><b>WASD</b> 移動（不按會跟著殺戮帶漂，S 往後退）　<b>J</b> 揮砍（按住連砍）　<b>K</b> 近距離　<b>L</b> 遠距離　<b>I</b> 範圍<br>
       <b>空白鍵</b> 道具（可存兩個）　<b>Shift</b> 翻滾閃避（短暫無敵）<br></span>
       <span class="tc">左邊搖桿移動・右邊三招＋道具＋翻滾＋砍<br></span>
       後面的死亡之牆會吃掉落後的人，前面的電網會把人彈回來<br>

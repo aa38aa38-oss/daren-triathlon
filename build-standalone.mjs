@@ -9,6 +9,7 @@ await build({
   root, base: './', logLevel: 'warn',
   build: {
     outDir: out, emptyOutDir: true, modulePreload: false,
+    assetsInlineLimit: 100 * 1024 * 1024, // 圖片全部內嵌，打包成單一檔案
     rollupOptions: { input: join(root, 'br.html') },
   },
 });

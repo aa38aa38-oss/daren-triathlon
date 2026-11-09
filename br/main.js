@@ -5,6 +5,7 @@ import * as G from './stage.js';
 import * as S from '../sample-race/sprites.js';
 import * as S2 from '../sample-race/sprites2.js';
 import * as S3 from './sprites3.js';
+import * as ART from './art.js';
 import { sfx, initAudio } from '../src/audio.js';
 
 // ---------- 畫面設定 ----------
@@ -86,19 +87,21 @@ const ITEM = {
 };
 const ITEM_IDS = Object.keys(ITEM);
 const ICON_URL = {};
-for (const id of ITEM_IDS) ICON_URL[id] = ITEM[id].icon.toDataURL();
-for (const [k, c] of Object.entries(S3.SKILL_ICONS)) ICON_URL['sk_' + k] = c.toDataURL();
+// 美術圖讀進來之後，道具與技能圖示換成新圖
+function setupArtIcons() {
+  for (const id of ITEM_IDS) { if (ART.icon(id)) ITEM[id].icon = ART.icon(id); ICON_URL[id] = ITEM[id].icon.toDataURL(); }
+  for (const k of Object.keys(S3.SKILL_ICONS)) ICON_URL['sk_' + k] = (ART.skillIcon(k) || S3.SKILL_ICONS[k]).toDataURL();
+}
+const skillImg = (k) => ART.skillIcon(k) || S3.SKILL_ICONS[k];
 
 // ---------- 可調數值 ----------
 const TUNE = {
   slashDmg: 30, slashRange: 22, slashCd: 0.4, killHeal: 20, aiToPlayer: 0.4, aiToAi: 0.2, aiHp: 4.5,
-  aiSkillMul: 0.55, aiCdMul: 1.8, lootChance: 0.5, chainTargets: 3, weatherT: 5, boxEvery: 1.6, rollCd: 1.2, minStage: 0,
+  aiSkillMul: 0.55, aiCdMul: 1.8, lootChance: 0.5, chainTargets: 3, weatherT: 5, boxEvery: 1.6, rollCd: 1.2, minStage: 0, lunge: 60,
 };
 
 const SKULL = (() => { const p = new Pix(10, 10); p.ell(5, 4, 4, 3.6, '#ffffff'); p.rect(3, 6, 4, 3, '#ffffff'); p.rect(2, 3, 2, 2, OUT); p.rect(6, 3, 2, 2, OUT); p.set(4, 8, OUT); p.set(5, 6, OUT); p.outline(OUT); return p.canvas(); })();
 const BOUNTY = (() => { const p = new Pix(16, 16); p.ell(8, 7, 7, 6, '#ffd000'); p.rect(4, 10, 8, 5, '#ffd000'); p.rect(3, 5, 3, 3, OUT); p.rect(10, 5, 3, 3, OUT); p.set(7, 9, OUT); p.set(8, 9, OUT); p.rect(5, 13, 1, 2, OUT); p.rect(8, 13, 1, 2, OUT); p.rect(11, 13, 1, 2, OUT); p.outline(OUT); return p.canvas(); })();
-const PANO_W = PORTRAIT ? 1200 : 1600;
-const PANO = S.makePanorama(PANO_W, HZ + 1);
 
 // ---------- 遊戲狀態 ----------
 const N = 30;
@@ -121,7 +124,7 @@ function makeRacer(i, type, isPlayer) {
   const hp = isPlayer ? base.stats.hp : Math.round(base.stats.hp * TUNE.aiHp);
   return {
     id: i, isPlayer, type, name: isPlayer ? '你' : NAMES[i % NAMES.length], look,
-    head: S.makeHead(look), imgs: null, corpse: null,
+    head: type === 'muscle' ? ART.A.muscle_head : S.makeHead(look), imgs: null, corpse: null, tint: isPlayer ? 0 : 1 + (i % 5),
     s: 0, u: 0, vs: 0, vu: 0, ks: 0, ku: 0, x: 0, y: 0, a: 0, v: 0, kx: 0, ky: 0, z: 0, vz: 0,
     hp, maxHp: hp, alive: true, items: [], itemT: 0, roll: 0,
     cd: { near: 1, far: 2, area: 4 }, punchCd: 0, punchT: 0, rollT: 0, rollCd: 0, rdx: 0, rdy: 0,
@@ -135,10 +138,16 @@ function makeRacer(i, type, isPlayer) {
 }
 
 function spriteSet(r) {
-  const th = stage.theme;
-  if (th === 'swim') return [-1, 0, 1].map((l) => [0, 1].map((f) => S3.makeSwimmer(r.look, f, l)));
-  if (th === 'bike') return S.bikerSet(r.look);
-  return [-1, 0, 1].map((l) => [0, 1].map((f) => S3.makeRunner(r.look, f, l)));
+  const f = ART.charFrames(r.type, stage.theme), v = r.tint;
+  return {
+    frames: f.frames.map((im) => ART.tinted(im, v)), flip: !!f.flip, swimArms: !!f.swimArms,
+    leanImg: f.leanImg ? ART.tinted(f.leanImg, v) : null, splashImg: f.splashImg ? ART.tinted(f.splashImg, v) : null,
+  };
+}
+function corpseFor(r) {
+  const c = ART.corpseOf(r.type, stage.theme);
+  if (c) return ART.tinted(c, r.tint);
+  return stage.theme === 'bike' ? S.makeCorpse(r.look) : S3.makeCorpseBody(r.look, stage.theme === 'swim');
 }
 
 // ---------- 關卡載入 ----------
@@ -171,7 +180,7 @@ function loadStage(i) {
   for (const r of racers) {
     Object.assign(r, { vs: 0, vu: 0, ks: 0, ku: 0, kx: 0, ky: 0, v: 0, z: 0, vz: 0, stunT: 0, slowT: 0, frozenT: 0, poisonT: 0, bleedT: 0, burnT: 0,
       droneT: 0, laserT: 0, melee: 0, dashT: 0, rollT: 0, boostT: 0, invulnT: 1.5 });
-    if (r.alive) { r.hp = r.maxHp; r.imgs = spriteSet(r); r.corpse = stage.theme === 'bike' ? S.makeCorpse(r.look) : S3.makeCorpseBody(r.look, stage.theme === 'swim'); }
+    if (r.alive) { r.hp = r.maxHp; r.imgs = spriteSet(r); r.corpse = corpseFor(r); }
     syncWorld(r);
   }
   if (!player.alive && stage.respawn) { player.alive = true; player.respawnT = 0; }
@@ -229,8 +238,11 @@ function setupTouch() {
     let dx = e.clientX - cx, dy = e.clientY - cy;
     const d = Math.hypot(dx, dy);
     if (d > R) { dx = (dx / d) * R; dy = (dy / d) * R; }
-    touch.mx = Math.abs(dx) < 8 ? 0 : dx / R;
-    touch.my = Math.abs(dy) < 8 ? 0 : -dy / R;
+    let mx = Math.abs(dx) < 12 ? 0 : dx / R, my = Math.abs(dy) < 12 ? 0 : -dy / R;
+    // 手指主要往左右推時，不要不小心一直往前衝
+    if (Math.abs(mx) > Math.abs(my) * 1.6) my = 0;
+    if (Math.abs(my) > Math.abs(mx) * 2.5) mx = 0;
+    touch.mx = mx; touch.my = my;
     knob.style.transform = `translate(${dx}px, ${dy}px)`;
   };
   pad.addEventListener('pointerdown', (e) => {
@@ -540,8 +552,9 @@ function castSkillInner(r, slot) {
   r.cd[slot] = CD[slot] * (P ? 1 : TUNE.aiCdMul);
   const name = SKILLS[r.type][slot][0];
   if (P) popup(name + '！', 'skill');
-  const f = fwd(r);
+  const f = { ...fwd(r) };
   const hitNearest = (range, dmg, stun, kb, cause = 'slash') => {
+    if (P) { const t = nearestEnemy(r, TUNE.lunge); if (t && dist(t, r) > range * 0.7) lungeTo(r, t, 10); }
     const o = nearestEnemy(r, range);
     if (!o) return null;
     const dx = o.x - r.x, dy = o.y - r.y, d = Math.hypot(dx, dy) || 1;
@@ -584,7 +597,7 @@ function castSkillInner(r, slot) {
       break;
     // 屠夫老王
     case 'butcher.near': { const o = hitNearest(22, 60, 0, 120); if (o) dot(o, 'bleedT', 4, r); break; }
-    case 'butcher.far': shots.push({ kind: 'hook', x: r.x, y: r.y, z: 10, a: r.a, spd: 520, life: 0.5, owner: r }); break;
+    case 'butcher.far': { const o = nearestEnemy(r, 260); shots.push({ kind: 'hook', x: r.x, y: r.y, z: 10, a: o ? Math.atan2(o.x - r.x, -(o.y - r.y)) : r.a, spd: 520, life: 0.5, owner: r }); break; }
     case 'butcher.area':
       slashes.push({ x: r.x, y: r.y, t: 0, owner: r, size: 34, big: true });
       for (const o of enemies(r)) {
@@ -595,17 +608,21 @@ function castSkillInner(r, slot) {
       break;
     // 外送阿明
     case 'courier.near': if (hitNearest(24, 50, 0.4, 180)) boost(r, 1.2, 1.4); break;
-    case 'courier.far':
+    case 'courier.far': {
+      const tg = nearestEnemy(r, 90);
+      if (tg) { const d = dist(tg, r) || 1; f.x = (tg.x - r.x) / d; f.y = (tg.y - r.y) / d; }
+      const sa = Math.atan2(f.x, -f.y);
       for (const o of enemies(r)) {
         const dx = o.x - r.x, dy = o.y - r.y;
         const along = dx * f.x + dy * f.y, lat = Math.abs(dx * f.y - dy * f.x);
         if (along > 0 && along < 85 && lat < along * 0.6 + 8) { hurt(o, 40 * m, r, f.x * 60, f.y * 60, 'fire'); dot(o, 'burnT', 3, r); }
       }
       for (let i = 0; i < 50; i++) {
-        const a = r.a + rnd(-0.5, 0.5), s = rnd(80, 220);
+        const a = sa + rnd(-0.5, 0.5), s = rnd(80, 220);
         particles.push({ x: r.x, y: r.y, z: 10, vx: Math.sin(a) * s, vy: -Math.cos(a) * s, vz: rnd(20, 70), c: i % 2 ? '#ff8a20' : '#ffd040', life: 0.5 });
       }
       break;
+    }
     case 'courier.area': r.dashT = 1.2; r.dashKind = 'nitro'; r.hitSet = new Set(); r.fireT = 0; break;
   }
   return true;
@@ -615,8 +632,24 @@ function slash(r) {
   dmgTag = 'slash';
   try { slashInner(r); } finally { dmgTag = ''; }
 }
+// 撲過去：把選手往目標移動一大段，並留下殘影
+function lungeTo(r, o, keep = 10) {
+  const dx = o.x - r.x, dy = o.y - r.y, d = Math.hypot(dx, dy);
+  if (d <= keep) return;
+  for (let i = 0; i < 10; i++) particles.push({ x: r.x + dx * i / 10, y: r.y + dy * i / 10, z: rnd(6, 14), vx: 0, vy: 0, vz: 10, c: i % 2 ? '#ffffff' : '#ffd000', life: 0.25 });
+  if (stage.theme === 'arena') {
+    const k = (d - keep) / d;
+    r.x += dx * k; r.y += dy * k; r.a = Math.atan2(dx, -dy);
+  } else {
+    const k = (Math.hypot(o.s - r.s, o.u - r.u) - keep) / (Math.hypot(o.s - r.s, o.u - r.u) || 1);
+    r.s = clamp(r.s + (o.s - r.s) * k, zone.back + 8, zone.front - 4);
+    r.u = clamp(r.u + (o.u - r.u) * k, -G.HALF + 3, G.HALF - 3);
+    syncWorld(r);
+  }
+}
 function slashInner(r) {
   if (r.punchCd > 0 || r.stunT > 0 || r.frozenT > 0) return;
+  if (r.isPlayer) { const o = nearestEnemy(r, TUNE.lunge); if (o && dist(o, r) > TUNE.slashRange * 0.7) lungeTo(r, o, 10); }
   r.punchCd = r.isPlayer ? TUNE.slashCd : 1.1;
   r.punchT = 0.2;
   const rad = r.isPlayer ? TUNE.slashRange : 15;
@@ -773,8 +806,11 @@ function stepRacer(r, c, dt) {
       if (r.z < -30) { blood(r.x, r.y, 0, 120, 70, 160); killRacer(r, r.lastAttacker && time - r.lastHit < 4 ? r.lastAttacker : null, 'fall'); return; }
     }
   } else {
-    let ts = zone.speed + c.my * stage.fwd * spdMul;
+    let ts = zone.speed + (c.my > 0 ? c.my * stage.fwd * 0.6 : c.my * stage.fwd * 1.35) * spdMul;
     let tu = c.mx * stage.lat * spdMul;
+    // 越靠近前方電網，往前的速度越被壓住，不會一直撞上去
+    const room = zone.front - r.s;
+    if (ts > zone.speed && room < 60) ts = zone.speed + (ts - zone.speed) * clamp((room - 12) / 48, 0, 1);
     if (r.rollT > 0) { ts = zone.speed + r.rdy * 230; tu = r.rdx * 200; }
     if (r.dashT > 0) { r.dashT -= dt; ts = zone.speed + (r.dashKind === 'nitro' ? 280 : 250); tu = c.mx * stage.lat; }
     const acc = r.rollT > 0 || r.dashT > 0 ? 12 : stage.accel;
@@ -799,7 +835,16 @@ function stepRacer(r, c, dt) {
     // 後面的死亡之牆
     if (r.s < zone.back) { killRacer(r, r.lastAttacker && time - r.lastHit < 3 ? r.lastAttacker : null, 'wall'); return; }
   }
-  r.anim += dt * (stage.theme === 'swim' ? 3 : 6) * (0.5 + Math.min(1, Math.abs(r.vs - zone.speed) / 60 + 0.5));
+  const prevStroke = Math.floor(r.anim);
+  r.anim += dt * (stage.theme === 'swim' ? 2.6 : 6) * (0.5 + Math.min(1, Math.abs(r.vs - zone.speed) / 60 + 0.5));
+  // 游泳：每划一下噴出水花，身後拖一條白色浪
+  if (stage.theme === 'swim' && near(r, 160)) {
+    if (Math.floor(r.anim) !== prevStroke) {
+      const side = Math.floor(r.anim) % 2 ? 1 : -1, rx = Math.cos(r.a), ry = Math.sin(r.a);
+      for (let i = 0; i < 10; i++) particles.push({ x: r.x + rx * side * 4, y: r.y + ry * side * 4, z: rnd(2, 6), vx: rnd(-30, 30), vy: rnd(-30, 30), vz: rnd(50, 110), c: i % 3 ? '#ffffff' : '#9ad8ff', life: 0.6 });
+    }
+    if (Math.random() < 0.5) particles.push({ x: r.x + rnd(-3, 3), y: r.y + rnd(-3, 3), z: 0.5, vx: 0, vy: 0, vz: 4, c: '#e8fbff', life: 0.8 });
+  }
 
   if (r.hp < r.maxHp && time - r.lastHit > (r.isPlayer ? 2.5 : 3)) r.hp = Math.min(r.maxHp, r.hp + (r.isPlayer ? 9 : 6) * dt);
   if (r.hp < r.maxHp * 0.5) { r.dripT -= dt; if (r.dripT <= 0) { r.dripT = 0.05; G.paintSplat(r.x + rnd(-2, 2), r.y + rnd(-2, 2), 1.3, 0.9); } }
@@ -1147,12 +1192,26 @@ function renderGround() {
   }
   g.putImageData(img, 0, 0, 0, HZ + 1, W, H - HZ - 1);
 }
+const panoCache = {};
+function panoFor(theme) {
+  if (panoCache[theme]) return panoCache[theme];
+  const src = ART.PANO[theme];
+  const h = HZ + 1, w = Math.round((src.width * h) / src.height);
+  const c = document.createElement('canvas');
+  c.width = w * 2; c.height = h;
+  const x = c.getContext('2d');
+  x.imageSmoothingEnabled = true;
+  x.drawImage(src, 0, 0, w, h);
+  x.save(); x.translate(w * 2, 0); x.scale(-1, 1); x.drawImage(src, 0, 0, w, h); x.restore();
+  return (panoCache[theme] = c);
+}
 function renderSky() {
-  let ox = -(((camA / (Math.PI * 2)) * PANO_W) % PANO_W);
-  if (ox > 0) ox -= PANO_W;
+  const pano = panoFor(stage.theme), PW = pano.width;
+  let ox = -(((camA / (Math.PI * 2)) * PW * 1.5) % PW);
+  if (ox > 0) ox -= PW;
   ox = Math.round(ox);
-  g.drawImage(PANO, ox, 0);
-  g.drawImage(PANO, ox + PANO_W, 0);
+  g.drawImage(pano, ox, 0);
+  g.drawImage(pano, ox + PW, 0);
   const tint = SKY_TINT[stage.theme];
   if (tint) { g.fillStyle = tint; g.fillRect(0, 0, W, HZ + 1); }
   const hz = HAZE[stage.theme];
@@ -1185,10 +1244,13 @@ function pixLine(x0, y0, x1, y1, w, col) {
 }
 function line3d(x1, y1, z1, x2, y2, z2, w, col) { const a = project(x1, y1, z1), b = project(x2, y2, z2); if (a && b) pixLine(a.sx, a.sy, b.sx, b.sy, w, col); }
 
-const SCN = {
-  tree: [S.TREE, 26], pine: [S.PINE, 30], rock: [S.ROCK, 9], crowd: [S.CROWD[0], 13], palm: [S3.PALM, 30], umbrella: [S3.UMBRELLA, 12],
-  tower: [S3.TOWER, 26], lamp: [S3.LAMP, 26], torch: [S3.TORCH[0], 14],
-};
+let SCN = null;
+function scn() {
+  return SCN || (SCN = {
+    tree: [S.TREE, 26], pine: [ART.A.prop_pine, 32], rock: [ART.A.prop_farm, 16], crowd: [S.CROWD[0], 13], palm: [ART.A.prop_beach, 30],
+    umbrella: [ART.A.prop_beach, 26], tower: [S3.TOWER, 26], lamp: [ART.A.prop_lamp, 30], torch: [S3.TORCH[0], 14],
+  });
+}
 function nearbyScenery(lo, hi) {
   let a = 0, b = scenery.length;
   while (a < b) { const m = (a + b) >> 1; if ((scenery[m].s || 0) < lo) a = m + 1; else b = m; }
@@ -1203,18 +1265,19 @@ function renderSprites() {
   const list = stage.theme === 'arena' ? scenery : nearbyScenery((v ? v.s : 0) - 100, (v ? v.s : 0) + 1000);
   for (const o of list) {
     if (o.kind === 'building') { const k = Math.floor(((o.s || 0) * 7 + o.side * 3) % 3 + 3) % 3; addSprite(S3.BUILDINGS[k], o.x, o.y, 0, 70 - k * 12); continue; }
-    const [im, wh] = SCN[o.kind];
+    const [im, wh] = scn()[o.kind];
     addSprite(o.kind === 'crowd' ? S.CROWD[fr] : o.kind === 'torch' ? S3.TORCH[fr] : im, o.x, o.y, 0, wh);
   }
   // 死亡之牆與電網
   if (stage.theme !== 'arena') {
-    const wallImg = { tsunami: S3.TSUNAMI, grinder: S3.GRINDER, zombies: S3.ZOMBIES }[stage.wall][fr];
+    const wallImg = ART.A[`wall_${stage.wall}${fr}`];
     const wb = G.toWorld(zone.back, 0);
     addSprite(wallImg, wb.x, wb.y, 0, ((G.RW + 30) * wallImg.height) / wallImg.width);
+    const fence = ART.A[`wall_fence${Math.floor(time * 12) % 2}`];
     const fb = G.toWorld(zone.front, 0);
-    addSprite(S3.FENCE[Math.floor(time * 12) % 2], fb.x, fb.y, 0, ((G.RW + 16) * 60) / 200, { alpha: 0.85 });
+    addSprite(fence, fb.x, fb.y, 0, ((G.RW + 16) * fence.height) / fence.width, { alpha: 0.9 });
   }
-  for (const b of boxes) addSprite(S.BOX[Math.floor(time * 6) % 4], b.x, b.y, 3 + Math.sin(time * 3 + b.x), b.loot ? 6 : 7);
+  for (const b of boxes) addSprite(ART.A.icon_qbox, b.x, b.y, 3 + Math.sin(time * 3 + b.x), b.loot ? 6 : 7);
   for (const h of hazards) {
     if (h.type === 'fire') continue;
     addSprite(h.type === 'oil' ? S.OIL : S.SPIKES, h.x, h.y, 0, h.type === 'oil' ? 3 : 3.5);
@@ -1224,22 +1287,23 @@ function renderSprites() {
     for (let k = 0; k < 3; k++) {
       const x = cl.x + Math.cos(k * 2.1) * cl.r * 0.45, y = cl.y + Math.sin(k * 2.1) * cl.r * 0.45;
       const q = project(x, y, 0);
-      if (q && q.depth > 35) addSprite(S2.GAS[(fr + k) % 2], x, y, 0, cl.r * 0.5, { alpha: cl.kind === 'smoke' ? 0.45 : 0.55 });
+      if (q && q.depth > 70) addSprite(cl.kind === 'smoke' ? S2.GAS[(fr + k) % 2] : ART.A.fx_gas, x, y, 0, cl.r * 0.5, { alpha: cl.kind === 'smoke' ? 0.45 : 0.7 });
     }
   }
   for (const s of shots) {
-    const im = s.kind === 'fireball' ? S2.FIREBALL[fr] : s.kind === 'dart' ? S2.DART : s.kind === 'missile' ? S2.MISSILE[fr]
-      : s.kind === 'dumbbell' ? S3.SKILL_ICONS.dumbbell : s.kind === 'hook' ? S3.SKILL_ICONS.hook : S.SHURIKEN[Math.floor(time * 20) % 2];
+    const im = s.kind === 'fireball' ? ART.A.fx_fireball : s.kind === 'dart' ? S2.DART : s.kind === 'missile' ? S2.MISSILE[fr]
+      : s.kind === 'dumbbell' ? skillImg('dumbbell') : s.kind === 'hook' ? skillImg('hook') : S.SHURIKEN[Math.floor(time * 20) % 2];
     addSprite(im, s.x, s.y, s.z, s.kind === 'fireball' ? 7 : s.kind === 'dumbbell' ? 6 : s.kind === 'missile' ? 4 : 3);
   }
   for (const b of booms) {
-    if (b.kind === 'ice') addSprite(S2.ICE_BOOM[Math.min(5, Math.floor(b.t / 0.07))], b.x, b.y, 0, b.r * 1.4);
-    else addSprite(S2.BOOM[Math.min(9, Math.floor(b.t / 0.05))], b.x, b.y, -b.r * 0.3, b.r * 1.8);
+    // 爆炸：美術圖從小放大再淡出
+    const k = clamp(b.t / 0.5, 0, 1);
+    if (b.kind === 'ice') addSprite(ART.A.fx_ice, b.x, b.y, 0, b.r * (0.6 + k * 0.9), { alpha: 1 - k * k });
+    else addSprite(ART.A.fx_boom, b.x, b.y, -b.r * 0.2, b.r * (0.5 + k * 1.4), { alpha: 1 - k * k });
   }
   for (const r of racers) {
     if (!r.alive || !r.imgs) continue;
-    const lean = r.lean < -0.35 ? 0 : r.lean > 0.35 ? 2 : 1;
-    addSprite(r.imgs[lean][Math.floor(r.anim) % 2], r.x, r.y, r.z, stage.wh, { racer: r });
+    addSprite(r.imgs.frames[0], r.x, r.y, r.z, stage.wh, { racer: r });
     if (r.droneT > 0) { const d = dronePos(r); addSprite(S2.DRONE[Math.floor(time * 20) % 2], d.x, d.y, d.z, 4); }
   }
   for (const c of chunks) addSprite(c.img, c.x, c.y, c.z, c.wh);
@@ -1261,7 +1325,7 @@ function renderSprites() {
   for (const p of particles) {
     const q = project(p.x, p.y, p.z);
     if (!q || q.depth > 900) continue;
-    const sz = Math.max(1, Math.round(q.sc * 0.8));
+    const sz = clamp(Math.round(q.sc * 0.8), 1, 3);
     g.fillStyle = p.c;
     g.fillRect(Math.round(q.sx), Math.round(q.sy), sz, sz);
   }
@@ -1306,7 +1370,7 @@ function drawRacer(s) {
     const f = S.FLAME[Math.floor(time * 20) % 2], fh = s.h * 0.35;
     g.drawImage(f, Math.round(s.sx - fh / 2), Math.round(s.y + s.h - fh * 0.2), Math.round(fh), Math.round(fh));
   }
-  g.drawImage(s.im, Math.round(s.x), Math.round(s.y), Math.round(s.w), Math.round(s.h));
+  drawBody(r, s);
   g.globalAlpha = 1;
   if (r.frozenT > 0) g.drawImage(S2.ICE, Math.round(s.x - s.w * 0.05), Math.round(s.y - s.h * 0.05), Math.round(s.w * 1.1), Math.round(s.h * 1.1));
   if (r.melee > 0) {
@@ -1314,7 +1378,7 @@ function drawRacer(s) {
     g.drawImage(a, Math.round(s.x + (Math.floor(time * 10) % 2 ? s.w * 0.75 : -ah * 0.6)), Math.round(s.y + s.h * 0.05), Math.round(ah), Math.round(ah));
   }
   if (r.stunT > 0) for (let k = 0; k < 3; k++) { g.fillStyle = '#ffe000'; g.fillRect(Math.round(s.sx + Math.cos(time * 8 + k * 2) * s.w * 0.4), Math.round(s.y - 2 + Math.sin(time * 8 + k * 2) * 2), 2, 2); }
-  if (r === bounty) { const bh = Math.max(6, s.h * 0.4); g.drawImage(BOUNTY, Math.round(s.sx - bh / 2), Math.round(s.y - bh - 4 + Math.sin(time * 5) * 2), Math.round(bh), Math.round(bh)); }
+  if (r === bounty) { const bh = Math.max(6, s.h * 0.4); g.drawImage(ART.A.icon_bounty || BOUNTY, Math.round(s.sx - bh / 2), Math.round(s.y - bh - 4 + Math.sin(time * 5) * 2), Math.round(bh), Math.round(bh)); }
   if (r.hp < r.maxHp && !r.isPlayer && s.depth < 260) {
     const bw = Math.round(s.w * 0.8);
     g.fillStyle = OUT; g.fillRect(Math.round(s.sx - bw / 2) - 1, Math.round(s.y) - 4, bw + 2, 3);
@@ -1322,6 +1386,65 @@ function drawRacer(s) {
     g.fillRect(Math.round(s.sx - bw / 2), Math.round(s.y) - 3, Math.max(0, Math.round((bw * r.hp) / r.maxHp)), 1);
   }
   if (r.isPlayer && player.alive) { g.fillStyle = '#ffe000'; const yy = Math.round(s.y - 6 + Math.sin(time * 6) * 1.5); g.fillRect(Math.round(s.sx) - 2, yy, 5, 2); g.fillRect(Math.round(s.sx) - 1, yy + 2, 3, 1); g.fillRect(Math.round(s.sx), yy + 3, 1, 1); }
+}
+
+// 畫角色本體：動作格、左右傾斜、游泳時的起伏與划水
+function drawBody(r, s) {
+  const A = r.imgs;
+  const ph = r.anim;
+  const step = Math.floor(ph) % 2;
+  let im = A.frames[step % A.frames.length];
+  let flip = A.flip && step === 1;
+  if (A.leanImg && Math.abs(r.lean) > 0.55) { im = A.leanImg; flip = r.lean < 0; }
+  const swim = stage.theme === 'swim';
+  if (swim && A.splashImg && (r.rollT > 0 || r.dashT > 0 || r.vs - zone.speed > 30)) im = A.splashImg;
+  // 依圖片比例重算寬度（不同動作的圖比例不一樣）
+  let h = s.h * (im === A.splashImg ? 0.95 : 1);
+  if (swim && A.swimArms) h *= 0.62;
+  const w = (im.width * h) / im.height;
+  let bob = 0, rot = r.lean * 0.12;
+  if (swim) {
+    bob = Math.sin(ph * Math.PI) * s.sc * 1.2;
+    rot += Math.sin(ph * Math.PI) * 0.12; // 划水時身體左右翻滾
+  } else if (stage.theme !== 'bike') bob = -Math.abs(Math.sin(ph * Math.PI)) * s.sc * 1.2;
+  g.save();
+  g.translate(Math.round(s.sx), Math.round(s.gy - (r.z || 0) * s.sc + bob));
+  g.rotate(rot);
+  if (flip) g.scale(-1, 1);
+  g.imageSmoothingEnabled = w < im.width;
+  if (swim && A.swimArms) drawSwimArms(w, h, ph, true);
+  g.drawImage(im, -w / 2, -h, w, h);
+  if (swim && A.swimArms) drawSwimArms(w, h, ph, false);
+  g.restore();
+  g.imageSmoothingEnabled = false;
+  if (swim) {
+    // 身邊的白色浪花圈
+    g.fillStyle = 'rgba(255,255,255,0.8)';
+    const rw = w * 0.55, cy = s.gy + bob - h * 0.05;
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2 + time * 3;
+      g.fillRect(Math.round(s.sx + Math.cos(a) * rw), Math.round(cy + Math.sin(a) * rw * 0.25), Math.max(1, Math.round(s.sc * 0.7)), 1);
+    }
+  }
+}
+// 自由式划水：手臂從後面甩過頭頂再插進水裡（back=true 畫在身體後面那一段）
+function drawSwimArms(w, h, ph, back) {
+  const skin = '#e8b080', dark = '#1a1028';
+  for (const side of [-1, 1]) {
+    const t = (ph * 0.5 + (side > 0 ? 0.5 : 0)) % 1;
+    const up = t < 0.5;
+    if (up !== !back) continue;
+    const sx = side * w * 0.3, sy = -h * 0.55;
+    const ang = up ? -Math.PI * (0.15 + t * 1.6) : Math.PI * 0.6;
+    const len = h * (up ? 0.7 : 0.35);
+    const ex = sx + side * Math.cos(ang) * len * 0.5, ey = sy + Math.sin(ang) * len;
+    const lw = Math.max(2, Math.round(w * 0.12));
+    g.lineCap = 'round';
+    g.strokeStyle = dark; g.lineWidth = lw + 2;
+    g.beginPath(); g.moveTo(sx, sy); g.lineTo(ex, ey); g.stroke();
+    g.strokeStyle = skin; g.lineWidth = lw;
+    g.beginPath(); g.moveTo(sx, sy); g.lineTo(ex, ey); g.stroke();
+  }
 }
 
 function renderWeather() {
@@ -1353,7 +1476,9 @@ function renderHud() {
     const it = player.items[k];
     if (!it) continue;
     const show = player.roll > 0 && k === player.items.length - 1 ? ITEM_IDS[Math.floor(time * 18) % ITEM_IDS.length] : it;
-    g.drawImage(ITEM[show].icon, x + 2, 30);
+    g.imageSmoothingEnabled = true;
+    g.drawImage(ITEM[show].icon, x + 2, 30, 20, 20);
+    g.imageSmoothingEnabled = false;
   }
   // 存活與目標
   const alive = racers.filter((r) => r.alive).length;
@@ -1384,6 +1509,29 @@ function renderHud() {
     g.fillStyle = '#7a3040'; g.fillRect(bx, by, Math.round(bw * p), 7);
     drawText(g, 'ARENA', bx + 2, by + 1, 1, '#ffffff', null);
   }
+  // 背後有人：畫面下緣出現紅色箭頭（越近越亮）
+  if (player.alive) {
+    let close = false;
+    for (const o of racers) {
+      if (!o.alive || o === player) continue;
+      let behind, lat;
+      if (stage.theme === 'arena') {
+        const f = fwd(player), dx = o.x - player.x, dy = o.y - player.y;
+        behind = -(dx * f.x + dy * f.y); lat = dx * -f.y + dy * f.x;
+        if (behind < 4 || Math.hypot(dx, dy) > 90) continue;
+      } else {
+        behind = player.s - o.s; lat = o.u - player.u;
+        if (behind < 4 || behind > 90) continue;
+      }
+      const a = clamp(1 - behind / 90, 0.25, 1), x = Math.round(W / 2 + clamp(lat * 2.2, -W / 2 + 10, W / 2 - 10));
+      g.globalAlpha = a;
+      g.fillStyle = o === bounty ? '#ffd000' : '#ff3040';
+      for (let i = 0; i < 4; i++) g.fillRect(x - 3 + i, H - 26 + i, 7 - i * 2, 1);
+      g.globalAlpha = 1;
+      if (behind < 30) close = true;
+    }
+    if (close && Math.floor(time * 4) % 2) drawText(g, 'BEHIND!', W / 2 - textW('BEHIND!', 1) / 2, H - 34, 1, '#ff4050');
+  }
   // 血量
   panel(6, H - 14, 70, 8);
   const hp = clamp(player.hp / player.maxHp, 0, 1) * (player.alive ? 1 : 0);
@@ -1394,10 +1542,12 @@ function renderHud() {
     ['near', 'far', 'area'].forEach((slot, k) => {
       const x = W - 92 + k * 29, y = H - 30;
       panel(x, y, 26, 26);
-      const ic = S3.SKILL_ICONS[SKILLS[player.type][slot][1]];
+      const ic = skillImg(SKILLS[player.type][slot][1]);
       const cd = Math.max(0, player.cd[slot]);
       g.globalAlpha = cd > 0 ? 0.35 : 1;
-      g.drawImage(ic, x + 3, y + 3);
+      g.imageSmoothingEnabled = true;
+      g.drawImage(ic, x + 3, y + 3, 20, 20);
+      g.imageSmoothingEnabled = false;
       g.globalAlpha = 1;
       if (cd > 0) drawText(g, String(Math.ceil(cd)), x + 13 - textW(String(Math.ceil(cd)), 2) / 2, y + 8, 2, '#ffffff');
       drawText(g, keysL[slot], x + 1, y + 1, 1, '#ffd000', null);
@@ -1445,7 +1595,7 @@ function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  if (phase !== 'select') {
+  if (phase !== 'select' && !window.__pause) {
     const steps = spectate && !player.alive && ffwd ? 4 : 1;
     for (let i = 0; i < steps; i++) update(dt);
   }
@@ -1477,19 +1627,36 @@ function buildSelect() {
     const L = S.lookFor(type, null);
     const card = document.createElement('button');
     card.className = 'card';
-    const pc = S.makePortrait(L);
+    const pc = document.createElement('img');
+    pc.src = ART.A[`${type}_portrait`].toDataURL();
     pc.className = 'portrait';
     const sk = SKILLS[type];
     card.innerHTML = `<div class="num">${i + 1}</div><div class="nm">${ch.name}</div>
       <div class="sk"><b>近</b>${sk.near[0]}　<b>遠</b>${sk.far[0]}　<b>範圍</b>${sk.area[0]}</div><div class="ds">${SKILL_DESC[type]}</div>`;
     card.insertBefore(pc, card.children[1]);
-    card.onclick = () => { portraitSmall = S.makePortrait(L); startGame(type); };
+    card.onclick = () => { portraitSmall = ART.A[`${type}_portrait`]; startGame(type); };
     box.appendChild(card);
   });
   addEventListener('keydown', (e) => { if (phase !== 'select') return; const n = parseInt(e.key, 10); if (n >= 1 && n <= 4) box.children[n - 1].click(); });
 }
-buildSelect();
-requestAnimationFrame(frame);
+// 美術圖讀好才開始
+ART.ready.then(() => {
+  setupArtIcons();
+  if (ART.LOGO) { const l = $('logo'); l.src = ART.LOGO.src; l.classList.remove('hidden'); $('title').classList.add('hidden'); }
+  buildSelect();
+  requestAnimationFrame(frame);
+}).catch((e) => { console.error('美術圖讀取失敗', e); buildSelect(); requestAnimationFrame(frame); });
+
+// 手機：擋掉捲動、雙指縮放、雙擊縮放、長按選單，避免畫面被拖走或放大卡住
+(() => {
+  const inScreen = (e) => e.target.closest && e.target.closest('.screen');
+  document.addEventListener('touchmove', (e) => { if (!inScreen(e) || e.touches.length > 1) e.preventDefault(); }, { passive: false });
+  document.addEventListener('touchstart', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+  let lastEnd = 0;
+  document.addEventListener('touchend', (e) => { const n = Date.now(); if (n - lastEnd < 350 && !inScreen(e)) e.preventDefault(); lastEnd = n; }, { passive: false });
+  for (const ev of ['gesturestart', 'gesturechange', 'gestureend', 'dblclick', 'contextmenu']) document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+  addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+})();
 
 // ---------- 除錯與自動試玩 ----------
 window.dbg = {
@@ -1497,6 +1664,7 @@ window.dbg = {
   get player() { return player; }, get racers() { return racers; }, get phase() { return phase; }, get stageIdx() { return stageIdx; }, get zone() { return zone; },
   autopilot(casual = false) { autoPilot = casual ? 'casual' : 'pro'; },
   manual() { autoPilot = false; },
+  stage(i) { loadStage(i); },
   newGame(typeIdx, casual) { $('result').classList.add('hidden'); $('ghost').classList.add('hidden'); startGame(S.TYPES[typeIdx]); this.autopilot(casual); },
   runGame(maxSec = 400) {
     stats.dmg = {};
