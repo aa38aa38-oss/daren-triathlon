@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1b2d">
+<title>超級導遊</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{--bg:#0f1b2d;--card:#18273d;--card2:#1f3250;--ink:#eef3fa;--mute:#93a4bd;--acc:#ffb547;--acc2:#4cc9a6;--err:#ff7a7a}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif}
+body{display:flex;flex-direction:column;height:100dvh;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+header{display:flex;align-items:center;gap:8px;padding:10px 14px}
+header h1{font-size:18px;margin:0;flex:1}
+#status{font-size:12px;color:var(--mute);background:var(--card);padding:4px 10px;border-radius:99px;max-width:55%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#status.ok{color:var(--acc2)}
+button{font:inherit;color:inherit;border:0;background:var(--card2);border-radius:12px;padding:9px 13px;cursor:pointer}
+button:active{filter:brightness(1.2)}
+.icon{width:44px;height:44px;padding:0;font-size:20px;border-radius:50%;flex:none}
+#map{height:26vh;min-height:150px;background:#0a1322;margin:0 12px;border-radius:14px;z-index:0}
+.bar{display:flex;gap:8px;padding:10px 12px;align-items:center;flex-wrap:wrap}
+.bar .grow{flex:1}
+.sw{display:flex;align-items:center;gap:6px;font-size:14px}
+main{flex:1;overflow-y:auto;padding:4px 12px 12px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:92%;padding:10px 13px;border-radius:16px;white-space:pre-wrap;word-break:break-word}
+.msg.user{align-self:flex-end;background:#2a4a7a}
+.msg.ai{align-self:flex-start;background:var(--card)}
+.msg.sys{align-self:center;background:none;color:var(--mute);font-size:13px;padding:2px}
+.msg.err{color:var(--err)}
+.msg img{max-width:220px;max-height:220px;border-radius:10px;display:block;margin-bottom:6px}
+.rp{display:block;margin-top:6px;padding:3px 10px;font-size:13px;background:var(--card2);color:var(--mute)}
+footer{padding:8px 10px 10px;background:#0b1525;border-top:1px solid #1d2c45}
+#chip{display:none;align-items:center;gap:8px;margin-bottom:6px;font-size:13px;color:var(--mute)}
+#chip img{width:44px;height:44px;object-fit:cover;border-radius:8px}
+.row{display:flex;gap:8px;align-items:center}
+#txt{flex:1;min-width:0;font:inherit;color:var(--ink);background:var(--card);border:1px solid #2a3d5c;border-radius:22px;padding:10px 15px;outline:none}
+#mic.rec{background:var(--err);animation:pulse 1s infinite}
+#send{background:var(--acc);color:#2b1b00}
+@keyframes pulse{50%{opacity:.55}}
+#start{position:fixed;inset:0;background:var(--bg);z-index:1000;display:flex;flex-direction:column;justify-content:center;gap:14px;padding:28px;overflow:auto}
+#start h2{font-size:30px;margin:0}
+#start p{margin:0;color:var(--mute)}
+#start ol{margin:0;padding-left:20px;color:var(--mute)}
+#go{background:var(--acc);color:#2b1b00;font-size:18px;font-weight:700;padding:15px}
+input[type=text],input[type=password],select,textarea{width:100%;font:inherit;color:var(--ink);background:var(--card);border:1px solid #2a3d5c;border-radius:10px;padding:9px 12px}
+dialog{background:var(--bg);color:var(--ink);border:1px solid #2a3d5c;border-radius:18px;width:min(92vw,440px);padding:18px}
+dialog::backdrop{background:#000a}
+dialog label{display:block;margin:12px 0 4px;font-size:14px;color:var(--mute)}
+#toast{position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#000d;padding:9px 16px;border-radius:99px;font-size:14px;display:none;z-index:2000;max-width:90vw;text-align:center}
+.leaflet-container{background:#0a1322}
+a{color:var(--acc)}
+</style>
+</head>
+<body>
+
+<div id="start">
+  <h2>🎧 超級導遊</h2>
+  <p>戴上耳機、把手機放口袋。走到哪裡，AI 導遊就講到哪裡；也能隨時用打字、說話或拍照問它。</p>
+  <ol>
+    <li>貼上你的 Anthropic API Key（只存在這支手機）</li>
+    <li>按「開始導覽」並允許定位／麥克風</li>
+    <li>開始走吧！</li>
+  </ol>
+  <input type="password" id="k0" placeholder="Anthropic API Key（sk-ant-…）" autocomplete="off">
+  <button id="go">開始導覽</button>
+  <p id="secwarn" style="color:var(--err);display:none">⚠️ 目前不是 https 網址，定位與麥克風會被瀏覽器封鎖。請把這個檔案放到 https 網站（例如 Netlify、GitHub Pages）再用手機開啟。</p>
+  <p style="font-size:13px">所有 AI 分析皆使用 Claude Sonnet 5.5。位置只會用於產生導覽內容。</p>
+</div>
+
+<header>
+  <h1>🎧 超級導遊</h1>
+  <div id="status">尚未定位</div>
+  <button class="icon" id="gear" aria-label="設定">⚙️</button>
+</header>
+<div id="map"></div>
+<div class="bar">
+  <label class="sw"><input type="checkbox" id="auto"> 到點自動導覽</label>
+  <span class="grow"></span>
+  <button id="here">📍 導覽此處</button>
+  <button id="stop">⏹ 停止</button>
+</div>
+<main id="feed"></main>
+<footer>
+  <div id="chip"><img id="chipimg" alt=""><span>已附上照片</span><button id="chipx" class="icon" style="width:32px;height:32px;font-size:14px">✕</button></div>
+  <div class="row">
+    <button class="icon" id="cam" aria-label="拍照或選照片">📷</button>
+    <input id="txt" type="text" placeholder="問導遊任何問題…" enterkeyhint="send">
+    <button class="icon" id="mic" aria-label="語音提問">🎤</button>
+    <button class="icon" id="send" aria-label="送出">➤</button>
+  </div>
+  <input type="file" id="file" accept="image/*" hidden>
+</footer>
+
+<dialog id="dlg">
+  <h3 style="margin:0">設定</h3>
+  <label>Anthropic API Key</label>
+  <input type="password" id="s_key" autocomplete="off">
+  <label>導覽語言</label>
+  <select id="s_lang"></select>
+  <label>語音（依語言列出）</label>
+  <select id="s_voice"></select>
+  <label>語速：<span id="s_rate_v"></span></label>
+  <input type="range" id="s_rate" min="0.7" max="1.4" step="0.05">
+  <label>觸發半徑：<span id="s_rad_v"></span> 公尺</label>
+  <input type="range" id="s_rad" min="30" max="200" step="10">
+  <label>我的興趣（讓導覽更貼近你）</label>
+  <textarea id="s_int" rows="2"></textarea>
+  <div style="display:flex;gap:8px;margin-top:16px">
+    <button id="s_clear" style="flex:1">清除對話</button>
+    <button id="s_ok" style="flex:1;background:var(--acc);color:#2b1b00">完成</button>
+  </div>
+</dialog>
+<div id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+"use strict";
+const MODEL = 'claude-sonnet-5-5';           // 全程固定使用 Sonnet 5.5
+const LANGS = {'繁體中文':'zh-TW','简体中文':'zh-CN','English':'en-US','日本語':'ja-JP','한국어':'ko-KR'};
+const GREET = {'zh-TW':'導覽開始了，一起出發吧。','zh-CN':'导览开始了，一起出发吧。','en-US':'Your tour has started. Let us go.','ja-JP':'ガイドを始めます。出発しましょう。','ko-KR':'투어를 시작합니다. 출발해요.'};
+const $ = s => document.querySelector(s);
+const store = {
+  get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch{return d}},
+  set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}}
+};
+const cfg = Object.assign({key:'',lang:'繁體中文',rate:1,interests:'歷史、建築、在地美食',radius:80,auto:true,voiceURI:''}, store.get('cfg',{}));
+const saveCfg = () => store.set('cfg',cfg);
+const code = () => LANGS[cfg.lang] || 'zh-TW';
+
+let pos=null, env=null, envPos=null, envBusy=false;
+let started=false, watchId=null, wl=null;
+let map=null, me=null, poiLayer=null;
+const visited=new Set();
+let lastGuidePos=null, lastGuideAt=0;
+let history=[], loading=false, ctrl=null, runId=0;
+let pendingImg=null;
+
+/* ---------- 小工具 ---------- */
+function toast(t,ms=3200){const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',ms)}
+function dist(a,b){const R=6371000,r=Math.PI/180,dLa=(b.lat-a.lat)*r,dLo=(b.lon-a.lon)*r;
+  const x=Math.sin(dLa/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dLo/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
+function setStatus(t,ok){const s=$('#status');s.textContent=t;s.classList.toggle('ok',!!ok)}
+const feed=$('#feed');
+function scroll(){feed.scrollTop=feed.scrollHeight}
+
+function addMsg(kind,text,img){
+  const d=document.createElement('div');d.className='msg '+kind;
+  if(img){const i=document.createElement('img');i.src=img;d.appendChild(i)}
+  const t=document.createElement('div');t.textContent=text;d.appendChild(t);
+  if(kind==='ai'){
+    const b=document.createElement('button');b.className='rp';b.textContent='🔊 重播';
+    b.onclick=()=>{Speaker.stop();Speaker.feed(t.textContent);Speaker.flush()};
+    d.appendChild(b);
+  }
+  feed.appendChild(d);scroll();
+  return {el:t,box:d};
+}
+
+/* ---------- 語音播報（耳機） ---------- */
+const Speaker={
+  q:[],buf:'',speaking:false,gen:0,
+  busy(){return this.speaking||this.q.length>0},
+  feed(d){
+    this.buf+=d;let m;
+    while((m=this.buf.match(/^[\s\S]*?[。！？!?；;\n]+/))){const s=m[0];this.buf=this.buf.slice(s.length);this.enqueue(s)}
+  },
+  flush(){if(this.buf.trim())this.enqueue(this.buf);this.buf=''},
+  enqueue(s){
+    s=s.replace(/[*#_`>~]/g,'').trim();
+    if(!s||!/[\p{L}\p{N}]/u.test(s))return;
+    this.q.push(s);this.pump();
+  },
+  pump(){
+    if(this.speaking||!this.q.length||!('speechSynthesis' in window))return;
+    const u=new SpeechSynthesisUtterance(this.q.shift()),g=this.gen;
+    u.lang=code();u.rate=cfg.rate;
+    const v=pickVoice();if(v){u.voice=v;u.lang=v.lang}
+    const done=()=>{if(g!==this.gen)return;this.speaking=false;this.pump()};
+    u.onend=done;u.onerror=done;
+    this.speaking=true;speechSynthesis.speak(u);
+  },
+  stop(){this.gen++;this.q=[];this.buf='';this.speaking=false;if('speechSynthesis' in window)speechSynthesis.cancel()}
+};
+const normLang=l=>(l||'').replace('_','-').toLowerCase();
+function pickVoice(){
+  if(!('speechSynthesis' in window))return null;
+  const vs=speechSynthesis.getVoices();
+  if(cfg.voiceURI){const v=vs.find(x=>x.voiceURI===cfg.voiceURI);if(v)return v}
+  return vs.find(v=>normLang(v.lang)===code().toLowerCase())||vs.find(v=>normLang(v.lang).startsWith(code().slice(0,2).toLowerCase()))||null;
+}
+function fillVoices(){
+  const sel=$('#s_voice');sel.textContent='';
+  const o=document.createElement('option');o.value='';o.textContent='自動選擇';sel.appendChild(o);
+  if(!('speechSynthesis' in window))return;
+  speechSynthesis.getVoices().filter(v=>normLang(v.lang).startsWith(code().slice(0,2).toLowerCase())).forEach(v=>{
+    const op=document.createElement('option');op.value=v.voiceURI;op.textContent=v.name+' ('+v.lang+')';sel.appendChild(op)});
+  sel.value=cfg.voiceURI;
+}
+if('speechSynthesis' in window)speechSynthesis.onvoiceschanged=fillVoices;
+
+/* ---------- Claude Sonnet 5.5 ---------- */
+function buildSystem(){
+  const p=pos?`緯度 ${pos.lat.toFixed(5)}、經度 ${pos.lon.toFixed(5)}（精度約 ${Math.round(pos.acc)} 公尺）`:'尚未取得定位';
+  const pois=env&&env.pois.length?env.pois.map(x=>`- ${x.name}（${x.type}，約 ${Math.round(x.d)} 公尺）`).join('\n'):'（無資料）';
+  return `你是「超級導遊」，一位博學、親切、有幽默感的私人導遊，正透過耳機對旅人說話。
+規則：
+- 一律使用${cfg.lang}回答，口語化，像在旅人身邊講解。
+- 輸出會被語音朗讀：不要用 Markdown、項目符號、表情符號、網址；用完整的句子。
+- 導覽與一般回答控制在 150～300 字；旅人要求詳細時才拉長。
+- 只講有把握的事實；不確定就坦白說「這點我不太確定」，不要編造年代、數字或傳說。
+- 善用下方位置資訊；附近資料不足時，可依地址與座標推論並誠實說明。
+- 看照片時：辨識地標、建築、藝術品、動植物、食物、菜單、路標，說明它是什麼、背景故事與實用建議（例如菜單翻譯與推薦）。不要辨認照片中人物的身分。
+- 結尾可自然帶出下一個值得看或問的點，但不要每次都反問。
+旅人興趣：${cfg.interests}
+目前時間：${new Date().toLocaleString('zh-TW')}
+目前位置：${p}
+地址：${env&&env.address||'未知'}
+附近景點（由近到遠）：
+${pois}`;
+}
+async function stream(messages,signal,onDelta){
+  const res=await fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',signal,
+    headers:{'content-type':'application/json','x-api-key':cfg.key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+    body:JSON.stringify({model:MODEL,max_tokens:1024,stream:true,system:buildSystem(),messages})
+  });
+  if(!res.ok){
+    let m='';try{m=(await res.json()).error.message}catch{}
+    throw new Error(res.status===401?'API Key 無效，請到設定重新輸入':('AI 回應失敗（'+res.status+'）'+m));
+  }
+  const rd=res.body.getReader(),dec=new TextDecoder();let buf='';
+  for(;;){
+    const {done,value}=await rd.read();if(done)break;
+    buf+=dec.decode(value,{stream:true});
+    let i;
+    while((i=buf.indexOf('\n\n'))>=0){
+      const ev=buf.slice(0,i);buf=buf.slice(i+2);
+      const line=ev.split('\n').find(l=>l.startsWith('data:'));if(!line)continue;
+      let j=null;try{j=JSON.parse(line.slice(5))}catch{}
+      if(!j)continue;
+      if(j.type==='content_block_delta'&&j.delta&&j.delta.type==='text_delta')onDelta(j.delta.text);
+      else if(j.type==='error')throw new Error(j.error&&j.error.message||'AI 錯誤');
+    }
+  }
+}
+function setLoading(v){loading=v;$('#send').style.opacity=v?.5:1}
+
+async function ask(text,{image=null,auto=false}={}){
+  if(!cfg.key){$('#s_key').value='';openSettings();toast('請先輸入 API Key');return}
+  if(ctrl)ctrl.abort();
+  Speaker.stop();
+  const my=++runId;ctrl=new AbortController();const signal=ctrl.signal;
+  addMsg(auto?'sys':'user',auto?('📍 '+text):text,image);
+  const bubble=addMsg('ai','…');
+  const content=image?[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:image.split(',')[1]}},{type:'text',text}]:text;
+  const entry={role:'user',content};history.push(entry);
+  let msgs=history.slice(-14);while(msgs.length&&msgs[0].role!=='user')msgs.shift();
+  let full='';setLoading(true);
+  const drop=()=>{const i=history.indexOf(entry);if(i>=0)history.splice(i,1)};
+  try{
+    await stream(msgs,signal,d=>{full+=d;bubble.el.textContent=full;Speaker.feed(d);scroll()});
+    if(my===runId)Speaker.flush();
+    history.push({role:'assistant',content:full});
+    if(image)entry.content='[旅人傳了一張照片] '+text;
+  }catch(e){
+    drop();
+    if(e.name==='AbortError'){if(!full.trim())bubble.box.remove()}
+    else{bubble.el.textContent='⚠️ '+e.message;bubble.box.classList.add('err');
+      const rp=bubble.box.querySelector('.rp');if(rp)rp.remove()}
+  }finally{if(my===runId){setLoading(false);ctrl=null}}
+}
+
+/* ---------- 定位、地圖、周邊景點 ---------- */
+function initMap(){
+  if(!window.L)return;
+  map=L.map('map',{zoomControl:false,attributionControl:true}).setView([25.033,121.565],16);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+  poiLayer=L.layerGroup().addTo(map);
+}
+function startGeo(){
+  if(!navigator.geolocation){setStatus('此瀏覽器不支援定位');return}
+  setStatus('定位中…');
+  watchId=navigator.geolocation.watchPosition(onPos,e=>{
+    setStatus(e.code===1?'定位被拒絕，請到瀏覽器設定開啟':'定位暫時失敗，重試中…');
+  },{enableHighAccuracy:true,maximumAge:5000,timeout:25000});
+}
+function onPos(p){
+  pos={lat:p.coords.latitude,lon:p.coords.longitude,acc:p.coords.accuracy};
+  setStatus('📍 '+(env&&env.short?env.short+' · ':'')+'±'+Math.round(pos.acc)+'m',true);
+  if(map){
+    const ll=[pos.lat,pos.lon];
+    if(!me){me=L.circleMarker(ll,{radius:8,color:'#fff',weight:2,fillColor:'#4cc9a6',fillOpacity:1}).addTo(map);map.setView(ll,17)}
+    else{me.setLatLng(ll);map.panTo(ll,{animate:true})}
+  }
+  if(!envPos||dist(envPos,pos)>120)refreshEnv();
+  maybeAutoGuide();
+}
+const LAND=new Set(['attraction','museum','gallery','artwork','viewpoint','monument','memorial','castle','ruins','archaeological_site','temple','place_of_worship','theatre','park','garden','heritage','yes','building','wayside_shrine','city_gate','tomb','fort','church','monastery','library','zoo','theme_park','aquarium','historic']);
+async function refreshEnv(){
+  if(envBusy||!pos)return;envBusy=true;
+  const at={lat:pos.lat,lon:pos.lon};
+  try{
+    const q=`[out:json][timeout:12];(nwr(around:220,${at.lat},${at.lon})[tourism][name];nwr(around:220,${at.lat},${at.lon})[historic][name];nwr(around:220,${at.lat},${at.lon})[amenity~"^(place_of_worship|museum|theatre|library|marketplace|restaurant|cafe)$"][name];nwr(around:220,${at.lat},${at.lon})[leisure~"^(park|garden)$"][name];);out center 60;`;
+    const [geo,ov]=await Promise.all([
+      fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&accept-language=${code()}&lat=${at.lat}&lon=${at.lon}`).then(r=>r.json()).catch(()=>null),
+      fetch('https://overpass-api.de/api/interpreter',{method:'POST',body:'data='+encodeURIComponent(q),headers:{'content-type':'application/x-www-form-urlencoded'}}).then(r=>r.json()).catch(()=>null)
+    ]);
+    const seen=new Set(),pois=[];
+    ((ov&&ov.elements)||[]).forEach(el=>{
+      const t=el.tags||{},name=t['name:'+code().slice(0,2)]||t.name;
+      const la=el.lat??(el.center&&el.center.lat),lo=el.lon??(el.center&&el.center.lon);
+      if(!name||la==null||seen.has(name))return;seen.add(name);
+      const type=t.tourism||t.historic||t.amenity||t.leisure||'';
+      pois.push({name,type,lat:la,lon:lo,d:dist(at,{lat:la,lon:lo}),land:!!(t.tourism||t.historic||['place_of_worship','museum','theatre','library'].includes(t.amenity)||['park','garden'].includes(t.leisure))});
+    });
+    pois.sort((a,b)=>a.d-b.d);
+    const a=(geo&&geo.address)||{};
+    env={address:(geo&&geo.display_name)||'',short:a.suburb||a.neighbourhood||a.city_district||a.city||a.town||a.village||'',pois:pois.slice(0,14)};
+    envPos=at;
+    if(poiLayer){poiLayer.clearLayers();env.pois.forEach(p=>L.circleMarker([p.lat,p.lon],{radius:5,color:'#ffb547',fillColor:'#ffb547',fillOpacity:.8,weight:1}).bindTooltip(p.name).addTo(poiLayer))}
+    if(pos)setStatus('📍 '+env.short+' · ±'+Math.round(pos.acc)+'m',true);
+  }finally{envBusy=false}
+  maybeAutoGuide();
+}
+function maybeAutoGuide(){
+  if(!started||!cfg.auto||!pos||!env||loading||Speaker.busy()||Date.now()-lastGuideAt<20000)return;
+  const c=env.pois.find(p=>p.land&&p.d<=cfg.radius&&!visited.has(p.name));
+  if(c){visited.add(c.name);guide(c);return}
+  if(!lastGuidePos||dist(lastGuidePos,pos)>300)guide(null);
+}
+function guide(poi){
+  lastGuidePos={lat:pos.lat,lon:pos.lon};lastGuideAt=Date.now();
+  if(poi)ask(`我剛抵達「${poi.name}」（${poi.type}），請為我做一段口語導覽：它是什麼、最精彩的故事、現場可以注意看的細節。`,{auto:true});
+  else ask('我走到了新的區域，請簡短介紹這附近的特色、歷史與值得留意的事。',{auto:true});
+}
+$('#here').onclick=()=>{
+  if(!pos||!env){toast('還在定位中，請稍候');return}
+  const c=env.pois.find(p=>p.land&&p.d<=150);
+  if(c)visited.add(c.name);
+  guide(c||null);
+};
+
+/* ---------- 輸入：文字、語音、照片 ---------- */
+function send(){
+  const t=$('#txt').value.trim();
+  if(!t&&!pendingImg)return;
+  const img=pendingImg;clearImg();$('#txt').value='';
+  ask(t||'請分析這張照片：這是什麼？有什麼故事、特色或實用建議？',{image:img});
+}
+$('#send').onclick=send;
+$('#txt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();send()}});
+
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+let rec=null;
+$('#mic').onclick=()=>{
+  if(!SR){toast('此瀏覽器不支援語音辨識，請改用 Chrome／Safari，或用鍵盤的聽寫鍵');return}
+  if(rec){rec.stop();return}
+  Speaker.stop();
+  rec=new SR();rec.lang=code();rec.interimResults=true;rec.continuous=false;
+  rec.onresult=e=>{let t='';for(const r of e.results)t+=r[0].transcript;$('#txt').value=t};
+  rec.onerror=e=>{if(e.error!=='no-speech'&&e.error!=='aborted')toast('語音辨識失敗：'+e.error)};
+  rec.onend=()=>{rec=null;$('#mic').classList.remove('rec');if($('#txt').value.trim())send()};
+  try{rec.start();$('#mic').classList.add('rec')}catch{rec=null}
+};
+
+async function toJpeg(file,max=1280){
+  let src,w,h,rev=null;
+  try{const b=await createImageBitmap(file);src=b;w=b.width;h=b.height}
+  catch{
+    rev=URL.createObjectURL(file);
+    src=await new Promise((ok,no)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=no;i.src=rev});
+    w=src.naturalWidth;h=src.naturalHeight;
+  }
+  const s=Math.min(1,max/Math.max(w,h)),c=document.createElement('canvas');
+  c.width=Math.round(w*s);c.height=Math.round(h*s);
+  c.getContext('2d').drawImage(src,0,0,c.width,c.height);
+  if(rev)URL.revokeObjectURL(rev);
+  return c.toDataURL('image/jpeg',0.85);
+}
+function clearImg(){pendingImg=null;$('#chip').style.display='none';$('#file').value=''}
+$('#cam').onclick=()=>$('#file').click();
+$('#chipx').onclick=clearImg;
+$('#file').onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;
+  try{pendingImg=await toJpeg(f);$('#chipimg').src=pendingImg;$('#chip').style.display='flex';$('#txt').focus()}
+  catch{toast('照片讀取失敗，請換一張')}
+};
+$('#stop').onclick=()=>{if(ctrl)ctrl.abort();Speaker.stop()};
+
+/* ---------- 設定 ---------- */
+const dlg=$('#dlg');
+Object.keys(LANGS).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=k;$('#s_lang').appendChild(o)});
+function openSettings(){
+  $('#s_key').value=cfg.key;$('#s_lang').value=cfg.lang;$('#s_rate').value=cfg.rate;$('#s_rate_v').textContent=cfg.rate+'x';
+  $('#s_rad').value=cfg.radius;$('#s_rad_v').textContent=cfg.radius;$('#s_int').value=cfg.interests;fillVoices();
+  if(!dlg.open)dlg.showModal();
+}
+$('#gear').onclick=openSettings;
+$('#s_lang').onchange=e=>{cfg.lang=e.target.value;cfg.voiceURI='';fillVoices();saveCfg()};
+$('#s_voice').onchange=e=>{cfg.voiceURI=e.target.value;saveCfg()};
+$('#s_rate').oninput=e=>{cfg.rate=+e.target.value;$('#s_rate_v').textContent=cfg.rate+'x';saveCfg()};
+$('#s_rad').oninput=e=>{cfg.radius=+e.target.value;$('#s_rad_v').textContent=cfg.radius;saveCfg()};
+$('#s_int').onchange=e=>{cfg.interests=e.target.value.trim()||'歷史、建築、在地美食';saveCfg()};
+$('#s_key').onchange=e=>{cfg.key=e.target.value.trim();saveCfg()};
+$('#s_clear').onclick=()=>{history=[];feed.textContent='';visited.clear();toast('已清除對話與已導覽紀錄')};
+$('#s_ok').onclick=()=>{cfg.key=$('#s_key').value.trim();saveCfg();dlg.close()};
+$('#auto').checked=cfg.auto;
+$('#auto').onchange=e=>{cfg.auto=e.target.checked;saveCfg()};
+
+/* ---------- 啟動 ---------- */
+async function keepAwake(){try{wl=await navigator.wakeLock.request('screen')}catch{}}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&started)keepAwake()});
+$('#k0').value=cfg.key;
+if(!window.isSecureContext)$('#secwarn').style.display='block';
+$('#go').onclick=()=>{
+  const k=$('#k0').value.trim();
+  if(k){cfg.key=k;saveCfg()}
+  if(!cfg.key){toast('請先貼上 API Key');$('#k0').focus();return}
+  started=true;$('#start').style.display='none';
+  // 在使用者點擊中解鎖語音（iOS 需要）
+  Speaker.feed(GREET[code()]||GREET['zh-TW']);Speaker.flush();
+  startGeo();keepAwake();
+};
+initMap();
+fillVoices();
+</script>
+</body>
+</html>
