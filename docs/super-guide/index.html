@@ -58,14 +58,14 @@ a{color:var(--acc)}
   <h2>🎧 超級導遊</h2>
   <p>戴上耳機、把手機放口袋。走到哪裡，AI 導遊就講到哪裡；也能隨時用打字、說話或拍照問它。</p>
   <ol>
-    <li>貼上你的 Anthropic API Key（只存在這支手機）</li>
+    <li>貼上你的 Gemini API Key（只存在這支手機）</li>
     <li>按「開始導覽」並允許定位／麥克風</li>
     <li>開始走吧！</li>
   </ol>
-  <input type="password" id="k0" placeholder="Anthropic API Key（sk-ant-…）" autocomplete="off">
+  <input type="password" id="k0" placeholder="Gemini API Key（AIza…）" autocomplete="off">
   <button id="go">開始導覽</button>
   <p id="secwarn" style="color:var(--err);display:none">⚠️ 目前不是 https 網址，定位與麥克風會被瀏覽器封鎖。請把這個檔案放到 https 網站（例如 Netlify、GitHub Pages）再用手機開啟。</p>
-  <p style="font-size:13px">所有 AI 分析皆使用 Claude Sonnet 5.5。位置只會用於產生導覽內容。</p>
+  <p style="font-size:13px">AI 分析使用 Google Gemini。位置只會用於產生導覽內容。</p>
 </div>
 
 <header>
@@ -94,8 +94,10 @@ a{color:var(--acc)}
 
 <dialog id="dlg">
   <h3 style="margin:0">設定</h3>
-  <label>Anthropic API Key</label>
+  <label>Gemini API Key</label>
   <input type="password" id="s_key" autocomplete="off">
+  <label>模型名稱（預設 gemini-flash-latest，可自行改）</label>
+  <input type="text" id="s_model" autocomplete="off" autocapitalize="off">
   <label>導覽語言</label>
   <select id="s_lang"></select>
   <label>語音（依語言列出）</label>
@@ -116,7 +118,6 @@ a{color:var(--acc)}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 "use strict";
-const MODEL = 'claude-sonnet-5-5';           // 全程固定使用 Sonnet 5.5
 const LANGS = {'繁體中文':'zh-TW','简体中文':'zh-CN','English':'en-US','日本語':'ja-JP','한국어':'ko-KR'};
 const GREET = {'zh-TW':'導覽開始了，一起出發吧。','zh-CN':'导览开始了，一起出发吧。','en-US':'Your tour has started. Let us go.','ja-JP':'ガイドを始めます。出発しましょう。','ko-KR':'투어를 시작합니다. 출발해요.'};
 const $ = s => document.querySelector(s);
@@ -124,7 +125,7 @@ const store = {
   get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch{return d}},
   set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}}
 };
-const cfg = Object.assign({key:'',lang:'繁體中文',rate:1,interests:'歷史、建築、在地美食',radius:80,auto:true,voiceURI:''}, store.get('cfg',{}));
+const cfg = Object.assign({key:'',lang:'繁體中文',rate:1,interests:'歷史、建築、在地美食',radius:80,auto:true,voiceURI:'',model:'gemini-flash-latest'}, store.get('cfg',{}));
 const saveCfg = () => store.set('cfg',cfg);
 const code = () => LANGS[cfg.lang] || 'zh-TW';
 
@@ -199,7 +200,7 @@ function fillVoices(){
 }
 if('speechSynthesis' in window)speechSynthesis.onvoiceschanged=fillVoices;
 
-/* ---------- Claude Sonnet 5.5 ---------- */
+/* ---------- Gemini ---------- */
 function buildSystem(){
   const p=pos?`緯度 ${pos.lat.toFixed(5)}、經度 ${pos.lon.toFixed(5)}（精度約 ${Math.round(pos.acc)} 公尺）`:'尚未取得定位';
   const pois=env&&env.pois.length?env.pois.map(x=>`- ${x.name}（${x.type}，約 ${Math.round(x.d)} 公尺）`).join('\n'):'（無資料）';
@@ -219,50 +220,55 @@ function buildSystem(){
 附近景點（由近到遠）：
 ${pois}`;
 }
-async function stream(messages,signal,onDelta){
-  const res=await fetch('https://api.anthropic.com/v1/messages',{
+async function stream(contents,signal,onDelta){
+  const model=encodeURIComponent((cfg.model||'gemini-flash-latest').trim());
+  const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,{
     method:'POST',signal,
-    headers:{'content-type':'application/json','x-api-key':cfg.key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-    body:JSON.stringify({model:MODEL,max_tokens:1024,stream:true,system:buildSystem(),messages})
+    headers:{'content-type':'application/json','x-goog-api-key':cfg.key},
+    body:JSON.stringify({systemInstruction:{parts:[{text:buildSystem()}]},contents,generationConfig:{maxOutputTokens:4096}})
   });
   if(!res.ok){
     let m='';try{m=(await res.json()).error.message}catch{}
-    throw new Error(res.status===401?'API Key 無效，請到設定重新輸入':('AI 回應失敗（'+res.status+'）'+m));
+    throw new Error(/API key/i.test(m)||res.status===403?'API Key 無效或無權限，請到設定重新輸入':('AI 回應失敗（'+res.status+'）'+m));
   }
-  const rd=res.body.getReader(),dec=new TextDecoder();let buf='';
+  const rd=res.body.getReader(),dec=new TextDecoder();let buf='',got=false,block='';
+  const handle=line=>{
+    if(!line.startsWith('data:'))return;
+    let j=null;try{j=JSON.parse(line.slice(5))}catch{}
+    if(!j)return;
+    if(j.promptFeedback&&j.promptFeedback.blockReason)block=j.promptFeedback.blockReason;
+    const c=j.candidates&&j.candidates[0];if(!c)return;
+    ((c.content&&c.content.parts)||[]).forEach(p=>{if(p.text&&!p.thought){got=true;onDelta(p.text)}});
+    if(c.finishReason&&c.finishReason!=='STOP'&&c.finishReason!=='MAX_TOKENS'&&!got)block=c.finishReason;
+  };
   for(;;){
     const {done,value}=await rd.read();if(done)break;
     buf+=dec.decode(value,{stream:true});
     let i;
-    while((i=buf.indexOf('\n\n'))>=0){
-      const ev=buf.slice(0,i);buf=buf.slice(i+2);
-      const line=ev.split('\n').find(l=>l.startsWith('data:'));if(!line)continue;
-      let j=null;try{j=JSON.parse(line.slice(5))}catch{}
-      if(!j)continue;
-      if(j.type==='content_block_delta'&&j.delta&&j.delta.type==='text_delta')onDelta(j.delta.text);
-      else if(j.type==='error')throw new Error(j.error&&j.error.message||'AI 錯誤');
-    }
+    while((i=buf.search(/\r?\n/))>=0){const line=buf.slice(0,i);buf=buf.slice(buf[i]==='\r'&&buf[i+1]==='\n'?i+2:i+1);handle(line)}
   }
+  if(buf)handle(buf);
+  if(!got)throw new Error('沒有收到回應'+(block?'（被安全機制擋下：'+block+'）':'，請再試一次'));
 }
 function setLoading(v){loading=v;$('#send').style.opacity=v?.5:1}
 
 async function ask(text,{image=null,auto=false}={}){
-  if(!cfg.key){$('#s_key').value='';openSettings();toast('請先輸入 API Key');return}
+  if(!cfg.key){$('#s_key').value='';openSettings();toast('請先輸入 Gemini API Key');return}
   if(ctrl)ctrl.abort();
   Speaker.stop();
   const my=++runId;ctrl=new AbortController();const signal=ctrl.signal;
   addMsg(auto?'sys':'user',auto?('📍 '+text):text,image);
   const bubble=addMsg('ai','…');
-  const content=image?[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:image.split(',')[1]}},{type:'text',text}]:text;
-  const entry={role:'user',content};history.push(entry);
+  const parts=image?[{inlineData:{mimeType:'image/jpeg',data:image.split(',')[1]}},{text}]:[{text}];
+  const entry={role:'user',parts};history.push(entry);
   let msgs=history.slice(-14);while(msgs.length&&msgs[0].role!=='user')msgs.shift();
   let full='';setLoading(true);
   const drop=()=>{const i=history.indexOf(entry);if(i>=0)history.splice(i,1)};
   try{
     await stream(msgs,signal,d=>{full+=d;bubble.el.textContent=full;Speaker.feed(d);scroll()});
     if(my===runId)Speaker.flush();
-    history.push({role:'assistant',content:full});
-    if(image)entry.content='[旅人傳了一張照片] '+text;
+    history.push({role:'model',parts:[{text:full}]});
+    if(image)entry.parts=[{text:'[旅人傳了一張照片] '+text}];
   }catch(e){
     drop();
     if(e.name==='AbortError'){if(!full.trim())bubble.box.remove()}
@@ -392,7 +398,7 @@ $('#stop').onclick=()=>{if(ctrl)ctrl.abort();Speaker.stop()};
 const dlg=$('#dlg');
 Object.keys(LANGS).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=k;$('#s_lang').appendChild(o)});
 function openSettings(){
-  $('#s_key').value=cfg.key;$('#s_lang').value=cfg.lang;$('#s_rate').value=cfg.rate;$('#s_rate_v').textContent=cfg.rate+'x';
+  $('#s_key').value=cfg.key;$('#s_model').value=cfg.model;$('#s_lang').value=cfg.lang;$('#s_rate').value=cfg.rate;$('#s_rate_v').textContent=cfg.rate+'x';
   $('#s_rad').value=cfg.radius;$('#s_rad_v').textContent=cfg.radius;$('#s_int').value=cfg.interests;fillVoices();
   if(!dlg.open)dlg.showModal();
 }
@@ -402,9 +408,10 @@ $('#s_voice').onchange=e=>{cfg.voiceURI=e.target.value;saveCfg()};
 $('#s_rate').oninput=e=>{cfg.rate=+e.target.value;$('#s_rate_v').textContent=cfg.rate+'x';saveCfg()};
 $('#s_rad').oninput=e=>{cfg.radius=+e.target.value;$('#s_rad_v').textContent=cfg.radius;saveCfg()};
 $('#s_int').onchange=e=>{cfg.interests=e.target.value.trim()||'歷史、建築、在地美食';saveCfg()};
+$('#s_model').onchange=e=>{cfg.model=e.target.value.trim()||'gemini-flash-latest';saveCfg()};
 $('#s_key').onchange=e=>{cfg.key=e.target.value.trim();saveCfg()};
 $('#s_clear').onclick=()=>{history=[];feed.textContent='';visited.clear();toast('已清除對話與已導覽紀錄')};
-$('#s_ok').onclick=()=>{cfg.key=$('#s_key').value.trim();saveCfg();dlg.close()};
+$('#s_ok').onclick=()=>{cfg.key=$('#s_key').value.trim();cfg.model=$('#s_model').value.trim()||'gemini-flash-latest';saveCfg();dlg.close()};
 $('#auto').checked=cfg.auto;
 $('#auto').onchange=e=>{cfg.auto=e.target.checked;saveCfg()};
 
