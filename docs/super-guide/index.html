@@ -221,15 +221,22 @@ function buildSystem(){
 ${pois}`;
 }
 async function stream(contents,signal,onDelta){
-  const model=encodeURIComponent((cfg.model||'gemini-flash-latest').trim());
-  const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,{
-    method:'POST',signal,
-    headers:{'content-type':'application/json','x-goog-api-key':cfg.key},
-    body:JSON.stringify({systemInstruction:{parts:[{text:buildSystem()}]},contents,generationConfig:{maxOutputTokens:4096}})
-  });
-  if(!res.ok){
-    let m='';try{m=(await res.json()).error.message}catch{}
-    throw new Error(/API key/i.test(m)||res.status===403?'API Key 無效或無權限，請到設定重新輸入':('AI 回應失敗（'+res.status+'）'+m));
+  const primary=(cfg.model||'gemini-flash-latest').trim();
+  const models=[primary,primary,'gemini-flash-lite-latest','gemini-flash-lite-latest'];
+  const body=JSON.stringify({systemInstruction:{parts:[{text:buildSystem()}]},contents,generationConfig:{maxOutputTokens:4096}});
+  let res=null;
+  for(let k=0;k<models.length;k++){
+    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(models[k])}:streamGenerateContent?alt=sse`,{
+      method:'POST',signal,
+      headers:{'content-type':'application/json','x-goog-api-key':cfg.key},body
+    });
+    if(r.ok){res=r;break}
+    let m='';try{m=(await r.json()).error.message}catch{}
+    if([429,500,502,503,504].includes(r.status)){
+      if(k<models.length-1){await new Promise(ok=>setTimeout(ok,1200*(k+1)));if(signal&&signal.aborted)throw new DOMException('aborted','AbortError');continue}
+      throw new Error('Gemini 現在人太多（'+r.status+'），請過幾秒再試一次');
+    }
+    throw new Error(/API key/i.test(m)||r.status===403?'API Key 無效或無權限，請到設定重新輸入':('AI 回應失敗（'+r.status+'）'+m));
   }
   const rd=res.body.getReader(),dec=new TextDecoder();let buf='',got=false,block='';
   const handle=line=>{
